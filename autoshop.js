@@ -1,0 +1,490 @@
+/**
+ * 京东定时抢购脚本 (Auto.js)
+ * 
+ * 功能：
+ * 1. 从京东服务器获取精确时间
+ * 2. 悬浮窗实时显示北京时间
+ * 3. 指定时间自动连点
+ * 4. 可视化点击区域
+ */
+
+// ==============================
+// 1. 全局配置参数 (可在此修改)
+// ==============================
+var CONFIG = {
+    // 点击坐标
+    clickX: 862,
+    clickY: 2246,
+    // 点击半径 (像素)
+    clickRadius: 6,
+    // 显示点击区域文本
+    showText: true,
+    overlayStroke: 5,
+    overlayPadding: 20,
+    overlayTextSize: 32,
+    overlayTextOffsetX: 30,
+    
+    // 连点配置
+    interval: 30,       // 点击间隔 (ms)
+    pressDuration: 40,  // 点击持续时间 (ms)
+    randomRange: 10,    // 时间随机波动范围 (ms)，例如设置为10，则间隔在 20-40ms 之间波动
+    totalDuration: 3000,// 总连点时长 (ms)
+    
+    // 双击配置
+    doubleClickX: 908,  // 双击坐标 X
+    doubleClickY: 1770,  // 双击坐标 Y
+    doubleClickDuration: 40,  // 单次点击持续时间 (ms)
+    doubleClickInterval: 30,  // 两次点击间隔 (ms)
+    doubleClickOffsetMs: 0,    // 相对于目标时间的偏移 (ms)，负数表示目标时间前执行
+    
+    // 界面配置
+    textSize: 16,       // 悬浮窗字体大小
+    
+    // 默认目标时间 (格式 HH:mm:ss，仅作为输入框默认值)
+    defaultTargetTime: "10:00:00",
+    defaultTargetDeci: "0" // 默认 0.1 秒位（0-9）
+};
+
+// 引入 Paint 以避免运行时找不到类
+importClass(android.graphics.Paint);
+
+// ==============================
+// 初始化：设置默认目标时间为当前本机时间
+// ==============================
+function initDefaultTargetTime() {
+    var now = new Date();
+    var h = pad2(now.getHours());
+    var m = pad2(now.getMinutes());
+    var s = pad2(now.getSeconds());
+    var deci = Math.floor(now.getMilliseconds() / 100);
+    CONFIG.defaultTargetTime = h + ":" + m + ":" + s + ":" + deci;
+}
+initDefaultTargetTime();
+
+// 全局变量
+var timeOffset = 0; // 服务器时间与本地时间的差值
+var targetTimestamp = 0; // 目标时间戳
+var targetTimeStr = CONFIG.defaultTargetTime; // 记录目标时间字符串（含秒）
+var targetDeci = parseInt(CONFIG.defaultTargetDeci || "0", 10); // 0.1 秒位
+var window = null; // 时间悬浮窗
+var overlayWindow = null; // 点击区域显示窗口
+var isRunning = true;
+
+// ==============================
+// 2. 程序入口
+// ==============================
+
+function main() {
+    // 检查无障碍服务
+    auto.waitFor();
+    
+    // 1. 初始化：获取时间偏移
+    toast("正在同步京东服务器时间...");
+    var timeInfo = getServerTimeInfo();
+    timeOffset = timeInfo.offset;
+    log("时间偏差(ms): " + timeOffset);
+    toast("时间同步完成，偏差: " + timeOffset + "ms");
+
+    // 弹窗提示当前北京时间（0.1s 精度）
+    var nowStr = formatTime(Date.now() + timeOffset);
+    dialogs.alert("当前北京时间", nowStr);
+
+    // 2. 用户交互：设置目标时间
+    if (!setUserTargetTime()) {
+        toast("取消运行");
+        return;
+    }
+
+    // 3. 初始化悬浮窗
+    initFloatyWindow();
+    
+    // 4. 显示点击区域
+    showClickArea();
+
+    // 5. 开启时间刷新与检测线程
+    threads.start(function() {
+        while (isRunning) {
+            var now = Date.now() + timeOffset;
+            
+            // 更新悬浮窗时间
+            updateFloatyTime(now);
+
+            // 检查是否到达时间
+            if (now >= targetTimestamp) {
+                // 停止刷新UI，准备点击
+                ui.run(function() {
+                    if(window) window.text.setText("执行中...");
+                    if(window) window.text.setTextColor(colors.RED);
+                });
+                
+                // 执行点击任务
+                executeClickTask();
+                
+                // 任务完成
+                handleFinish();
+                break;
+            }
+            
+            // 提高检测频率以匹配 0.1s 精度
+            sleep(5);
+        }
+    });
+}
+
+// ==============================
+// 3. 功能函数封装
+// ==============================
+
+/**
+ * 获取京东服务器时间
+ */
+function getServerTimeInfo() {
+    var url = "https://www.jd.com";
+    try {
+        var res = http.get(url);
+        if (res.statusCode != 200) {
+            throw "HTTP " + res.statusCode;
+        }
+
+        var headers = res.headers;
+        var dateStr = headers["Date"] || headers["date"];
+        if (!dateStr) {
+            throw "no Date header";
+        }
+
+        var serverMs = new Date(dateStr).getTime();
+        var localMs = Date.now();
+        var offset = serverMs - localMs; 
+        return {
+            serverMs: serverMs,
+            offset: offset
+        };
+    } catch (e) {
+        log(e);
+        toast("从京东获取时间失败，改用本机时间");
+        return {
+            serverMs: Date.now(),
+            offset: 0
+        };
+    }
+}
+
+/**
+ * 弹出对话框设置目标时间
+ */
+function setUserTargetTime() {
+    var timeInput = pickTimeWithScroll(CONFIG.defaultTargetTime);
+    if (!timeInput) {
+        return false;
+    }
+    
+    var result = parseTimeString(timeInput);
+    if (!result.valid) {
+        toast("时间解析失败");
+        return false;
+    }
+    
+    var targetDate = new Date();
+    targetDate.setHours(result.h);
+    targetDate.setMinutes(result.m);
+    targetDate.setSeconds(result.s);
+    targetDate.setMilliseconds(result.d * 100); // 0.1s 精度
+
+    if (targetDate.getTime() < Date.now()) {
+        toast("注意：设置的时间早于当前时间，将立即执行或无效");
+    }
+
+    targetTimestamp = targetDate.getTime();
+    targetDeci = result.d;
+    targetTimeStr = result.formatted;
+    return true;
+}
+
+/**
+ * 解析 HH:MM:SS:d 格式的时间字符串
+ * @param {string} timeStr 时间字符串
+ * @return {object} {valid, h, m, s, d, formatted}
+ */
+function parseTimeString(timeStr) {
+    var parts = timeStr.split(":");
+    if (parts.length !== 4) {
+        return { valid: false };
+    }
+
+    var h = parseInt(parts[0], 10);
+    var m = parseInt(parts[1], 10);
+    var s = parseInt(parts[2], 10);
+    var d = parseInt(parts[3], 10);
+
+    if (isNaN(h) || isNaN(m) || isNaN(s) || isNaN(d) || 
+        h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59 || d < 0 || d > 9) {
+        return { valid: false };
+    }
+
+    return {
+        valid: true,
+        h: h,
+        m: m,
+        s: s,
+        d: d,
+        formatted: pad2(h) + ":" + pad2(m) + ":" + pad2(s) + ":" + d
+    };
+}
+
+/**
+ * 通过滑动选择器选择时间
+ * @param {string} defaultTimeStr 默认时间字符串 HH:MM:SS:d
+ * @return {string|null} 选择后的时间字符串，或 null 取消
+ */
+function pickTimeWithScroll(defaultTimeStr) {
+    var parts = defaultTimeStr.split(":");
+    var h = parseInt(parts[0], 10) || 0;
+    var m = parseInt(parts[1], 10) || 0;
+    var s = parseInt(parts[2], 10) || 0;
+    var d = parseInt(parts[3], 10) || 0;
+
+    // 选择小时
+    var hList = buildNumberList(0, 23);
+    h = dialogs.singleChoice("选择小时 (HH)", hList, h);
+    if (h < 0) return null;
+
+    // 选择分钟
+    var mList = buildNumberList(0, 59);
+    m = dialogs.singleChoice("选择分钟 (MM)", mList, m);
+    if (m < 0) return null;
+
+    // 选择秒
+    var sList = buildNumberList(0, 59);
+    s = dialogs.singleChoice("选择秒 (SS)", sList, s);
+    if (s < 0) return null;
+
+    // 选择 0.1 秒位
+    var dList = buildNumberList(0, 9);
+    d = dialogs.singleChoice("选择 0.1 秒位 (0-9)", dList, d);
+    if (d < 0) return null;
+
+    return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + ":" + d;
+}
+
+/**
+ * 构建数字列表（0-9、0-23、0-59等）
+ * @param {number} min 最小值
+ * @param {number} max 最大值
+ * @return {array} 格式化的数字数组
+ */
+function buildNumberList(min, max) {
+    var list = [];
+    for (var i = min; i <= max; i++) {
+        list.push(pad2(i));
+    }
+    return list;
+}
+
+/**
+ * 创建时间选择器的 UI 布局
+ * @param {object} ui 时间对象 {hour, minute, second, deci}
+ * @return {android.widget.LinearLayout} 布局
+ */
+function createTimePickerLayout(ui) {
+    // 已废弃，使用 pickTimeWithScroll 替代
+}
+
+/**
+ * 创建单个时间调整项
+ * @param {string} label 标签
+ * @param {object} ui 数据对象
+ * @param {string} key UI 对象的键
+ * @param {number} min 最小值
+ * @param {number} max 最大值
+ * @return {android.view.View} 视图
+ */
+function createTimeItemLayout(label, ui, key, min, max) {
+    // 已废弃，使用 buildNumberList 替代
+}
+
+/**
+ * 初始化时间悬浮窗
+ */
+function initFloatyWindow() {
+    window = floaty.window(
+        <frame gravity="center" bg="#80000000" padding="10">
+            <text id="text" textSize="{{CONFIG.textSize}}sp" textColor="#ffffff" text="加载中..." />
+        </frame>
+    );
+    
+    window.setPosition(100, 100);
+    window.exitOnClose();
+
+    // 悬浮窗拖动逻辑
+    var x = 0, y = 0;
+    var windowX, windowY;
+    var downTime;
+
+    window.text.setOnTouchListener(function(view, event) {
+        switch (event.getAction()) {
+            case event.ACTION_DOWN:
+                x = event.getRawX();
+                y = event.getRawY();
+                windowX = window.getX();
+                windowY = window.getY();
+                downTime = new Date().getTime();
+                return true;
+            case event.ACTION_MOVE:
+                // 移动手指时调整悬浮窗位置
+                window.setPosition(windowX + (event.getRawX() - x),
+                    windowY + (event.getRawY() - y));
+                return true;
+            case event.ACTION_UP:
+                return true;
+        }
+        return true;
+    });
+}
+
+/**
+ * 显示点击区域
+ */
+function showClickArea() {
+    // 用 toast 临时显示目标坐标，避免 Canvas 绘制引起的触摸阻塞
+    toast("目标坐标: " + CONFIG.clickX + ", " + CONFIG.clickY);
+}
+
+/**
+ * 更新悬浮窗时间显示
+ */
+function updateFloatyTime(currentMs) {
+    var timeText = formatTime(currentMs);
+    
+    ui.run(function() {
+        if (window) {
+            window.text.setText(timeText);
+        }
+    });
+}
+
+/**
+ * 将时间戳格式化为 HH:MM:SS:s（0.1s 精度）
+ */
+function formatTime(ms) {
+    var date = new Date(ms);
+    var h = pad2(date.getHours());
+    var m = pad2(date.getMinutes());
+    var s = pad2(date.getSeconds());
+    var deci = Math.floor(date.getMilliseconds() / 100); // 0-9
+    return h + ":" + m + ":" + s + ":" + deci;
+}
+
+function pad2(n) {
+    return n < 10 ? "0" + n : "" + n;
+}
+
+/**
+ * 执行点击任务
+ */
+function executeClickTask() {
+    log("开始点击任务");
+    var startTime = Date.now();
+    var clickCount = 0;
+    
+    while (Date.now() - startTime < CONFIG.totalDuration) {
+        // 1. 计算随机坐标
+        // 在半径内随机生成点: x = r * cos(theta), y = r * sin(theta)
+        // 为了均匀分布，r 应该是 sqrt(random) * R
+        var angle = Math.random() * 2 * Math.PI;
+        var r = Math.sqrt(Math.random()) * CONFIG.clickRadius;
+        var targetX = Math.round(CONFIG.clickX + r * Math.cos(angle));
+        var targetY = Math.round(CONFIG.clickY + r * Math.sin(angle));
+
+        // 2. 计算随机时间
+        // 持续时间波动
+        var duration = CONFIG.pressDuration + random(-CONFIG.randomRange, CONFIG.randomRange);
+        if (duration < 1) duration = 1;
+        
+        // 间隔时间波动
+        var interval = CONFIG.interval + random(-CONFIG.randomRange, CONFIG.randomRange);
+        if (interval < 1) interval = 1;
+
+        // 3. 执行点击
+        try {
+            press(targetX, targetY, duration);
+            clickCount++;
+            log("点击 #" + clickCount + " 在 (" + targetX + ", " + targetY + ")，持续 " + duration + "ms");
+        } catch (e) {
+            log("点击失败: " + e);
+        }
+        
+        // 4. 等待间隔
+        sleep(interval);
+    }
+    log("点击任务结束，共点击 " + clickCount + " 次");
+}
+
+/**
+ * 执行单次双击动作
+ * @param {number} x 双击坐标 X
+ * @param {number} y 双击坐标 Y
+ */
+function doubleTap(x, y) {
+    try {
+        // 第一次点击
+        press(x, y, CONFIG.doubleClickDuration);
+        log("第一次点击 (" + x + ", " + y + ")");
+        
+        // 等待间隔
+        sleep(CONFIG.doubleClickInterval);
+        
+        // 第二次点击
+        press(x, y, CONFIG.doubleClickDuration);
+        log("第二次点击 (" + x + ", " + y + ")，完成双击");
+    } catch (e) {
+        log("双击失败: " + e);
+    }
+}
+
+/**
+ * 在指定时间偏移量处执行双击
+ * @param {number} offsetMs 相对于目标时间的偏移量（毫秒），负数表示目标时间前执行
+ */
+function executeDoubleClickTask(offsetMs) {
+    var clickTime = targetTimestamp + (offsetMs || CONFIG.doubleClickOffsetMs);
+    log("等待双击时间..." + formatTime(clickTime));
+    
+    // 轮询等待指定时间
+    while (isRunning) {
+        var now = Date.now() + timeOffset;
+        
+        if (now >= clickTime) {
+            log("双击时间已到，执行双击");
+            doubleTap(CONFIG.doubleClickX, CONFIG.doubleClickY);
+            log("双击完成");
+            return true;
+        }
+        
+        // 检测频率提高以匹配 0.1s 精度
+        sleep(5);
+    }
+    return false;
+}
+
+/**
+ * 任务完成后的处理
+ */
+function handleFinish() {
+    ui.run(function() {
+        if(window) window.text.setText("完成");
+    });
+    
+    // 3秒后结束
+    sleep(3000);
+    
+    // 清理资源
+    isRunning = false;
+    if (window) window.close();
+    if (overlayWindow) overlayWindow.close();
+    
+    log("脚本自动结束");
+    exit();
+}
+
+// 启动主程序
+main();
