@@ -6,7 +6,154 @@
  * 2. 悬浮窗实时显示北京时间
  * 3. 指定时间自动连点
  * 4. 可视化点击区域
+ * 5. 获取用户点击坐标
  */
+
+/**
+ * 通过用户点击设置连点器坐标（取最后一次点击）
+ */
+function setClickCoordinatesByTouching() {
+    var choice = dialogs.confirm("设置连点坐标", "是否通过点击屏幕来设置连点坐标？\n\n可反复点击调整位置，双击窗口停止");
+    if (!choice) {
+        return false;
+    }
+    
+    dialogs.alert("提示", "准备开始！\n\n请在屏幕上点击要连点的位置\n可点击多次调整，最后一次点击的位置将被使用\n\n双击悬浮窗停止");
+    
+    // 获取用户的多次点击
+    var coordinates = getTouchCoordinates(-1, true);
+    
+    if (coordinates.length === 0) {
+        toast("未获取到任何点击");
+        return false;
+    }
+    
+    // 取最后一次点击的坐标
+    var lastCoord = coordinates[coordinates.length - 1];
+    CONFIG.clickX = lastCoord.x;
+    CONFIG.clickY = lastCoord.y;
+    
+    log("连点坐标已设置: (" + CONFIG.clickX + ", " + CONFIG.clickY + ")");
+    dialogs.alert("设置完成", "连点坐标: (" + CONFIG.clickX + ", " + CONFIG.clickY + ")");
+    
+    return true;
+}
+
+// ==============================
+// 0. 工具函数 - 获取点击坐标
+// ==============================
+
+/**
+ * 监听屏幕点击，获取点击坐标（阻塞式）
+ * @param {number} maxClicks 最多获取的点击次数，-1表示不限制
+ * @param {boolean} showUI 是否显示控制窗口，默认true
+ * @return {array} 点击坐标数组，每项为 {x, y}
+ */
+function getTouchCoordinates(maxClicks, showUI) {
+    maxClicks = maxClicks || -1;
+    showUI = showUI !== false;
+    
+    var coordinates = [];
+    var clickCount = 0;
+    var isListening = true;
+    var screenWidth = device.width;
+    var screenHeight = device.height;
+    
+    // 全屏悬浮窗捕获点击
+    var fullScreenWindow = floaty.window(
+        <frame id="root" gravity="center" bg="#00000000">
+            <text id="text" textSize="16sp" textColor="#ffffff" text="" />
+        </frame>
+    );
+    
+    fullScreenWindow.setPosition(0, 0);
+    fullScreenWindow.setSize(screenWidth, screenHeight);
+    
+    var controlWindow = null;
+    var lastControlClickTime = 0;
+    
+    if (showUI) {
+        controlWindow = floaty.window(
+            <frame gravity="center" bg="#aa000000" padding="10">
+                <text id="control" textSize="14sp" textColor="#ffffff" text="准备中...\n\n双击停止" />
+            </frame>
+        );
+        controlWindow.setPosition(100, 100);
+        
+        // 拖动和双击逻辑
+        var controlX = 0, controlY = 0;
+        var windowX, windowY;
+        
+        controlWindow.control.setOnTouchListener(function(view, event) {
+            var action = event.getAction();
+            
+            if (action == event.ACTION_DOWN) {
+                controlX = event.getRawX();
+                controlY = event.getRawY();
+                windowX = controlWindow.getX();
+                windowY = controlWindow.getY();
+                
+                var currentTime = new Date().getTime();
+                if (currentTime - lastControlClickTime < 300) {
+                    // 双击了停止
+                    isListening = false;
+                }
+                lastControlClickTime = currentTime;
+                return true;
+            }
+            
+            if (action == event.ACTION_MOVE) {
+                // 拖动窗口
+                var offsetX = event.getRawX() - controlX;
+                var offsetY = event.getRawY() - controlY;
+                controlWindow.setPosition(windowX + offsetX, windowY + offsetY);
+                return true;
+            }
+            
+            return true;
+        });
+    }
+    
+    // 监听点击
+    fullScreenWindow.root.setOnTouchListener(function(view, event) {
+        if (event.getAction() == event.ACTION_DOWN) {
+            var x = Math.round(event.getRawX());
+            var y = Math.round(event.getRawY());
+            
+            clickCount++;
+            coordinates.push({x: x, y: y});
+            
+            log("获取点击 #" + clickCount + ": (" + x + ", " + y + ")");
+            
+            if (showUI && controlWindow) {
+                ui.run(function() {
+                    controlWindow.control.setText("共 " + clickCount + " 次\n(" + x + ", " + y + ")\n\n双击停止");
+                });
+            }
+            
+            if (maxClicks > 0 && clickCount >= maxClicks) {
+                isListening = false;
+            }
+        }
+        return true;
+    });
+    
+    if (showUI) {
+        log("点击坐标采集已启动，双击停止窗口或点击 " + maxClicks + " 次后结束");
+    }
+    
+    // 等待点击结束
+    while (isListening) {
+        sleep(100);
+    }
+    
+    // 清理资源
+    if (fullScreenWindow) fullScreenWindow.close();
+    if (controlWindow) controlWindow.close();
+    
+    log("采集完成，共获得 " + clickCount + " 个坐标");
+    return coordinates;
+}
 
 // ==============================
 // 1. 全局配置参数 (可在此修改)
@@ -95,13 +242,16 @@ function main() {
         return;
     }
 
-    // 3. 初始化悬浮窗
+    // 3. 用户交互：设置连点坐标
+    setClickCoordinatesByTouching();
+
+    // 4. 初始化悬浮窗
     initFloatyWindow();
     
-    // 4. 显示点击区域
+    // 5. 显示点击区域
     showClickArea();
 
-    // 5. 开启时间刷新与检测线程
+    // 6. 开启时间刷新与检测线程
     threads.start(function() {
         while (isRunning) {
             var now = Date.now() + timeOffset;
