@@ -21,7 +21,7 @@ function showStartConfirmationFloaty() {
     var window = floaty.window(
         <frame gravity="center" bg="#ecececff" padding="20">
             <linear orientation="vertical" gravity="center_horizontal" spacing="15">
-                <text text="京东定时抢购脚本" textColor="#000000" textSize="20sp" gravity="center" />
+                <text text="定时抢购脚本" textColor="#000000" textSize="20sp" gravity="center" />
                 
                 <linear orientation="vertical" gravity="center_horizontal" spacing="5">
                     <text text="脚本已准备就绪,切换到应用后" textColor="#666666" textSize="14sp" gravity="center" />
@@ -577,6 +577,16 @@ var window = null; // 时间悬浮窗
 var overlayWindow = null; // 点击区域显示窗口
 var isRunning = true;
 
+// 时间源配置
+var TIME_SOURCE = {
+    HUAWEI: "huawei",      // 华为云
+    ALIBABA: "alibaba",    // 阿里巴巴
+    TENCENT: "tencent",    // 腾讯
+    PINDUODUO: "pinduoduo", // 拼多多
+    JD: "jd"                // 京东
+};
+var currentTimeSource = "jd"; // 默认使用京东
+
 // 多任务相关
 var taskList = []; // 任务列表数组
 var currentTaskIndex = 0; // 当前任务索引
@@ -653,14 +663,16 @@ function loadSettings() {
  * 显示主菜单，让用户选择"设置"、"运行"、"查看设置"或"退出"
  */
 function showMainMenu() {
-    var options = ["⚙️ 设置", "▶️ 运行", "👁️ 查看上次保存的设置", "✕ 退出"];
-    var choice = dialogs.select("京东定时抢购脚本", options);
+    var options = ["⚙️ 设置", "⏱️ 设置时间源", "▶️ 运行", "👁️ 查看上次保存的设置", "✕ 退出"];
+    var choice = dialogs.select("定时抢购脚本", options);
     
     if (choice === 0) {
         return "setup";
     } else if (choice === 1) {
-        return "run";
+        return "setTimeSource";
     } else if (choice === 2) {
+        return "run";
+    } else if (choice === 3) {
         return "view";
     } else {
         return "exit";
@@ -1005,7 +1017,7 @@ function runMode() {
     }
     
     // 2. 初始化：同步服务器时间
-    toast("正在同步京东服务器时间...");
+    toast("正在同步服务器时间...");
     var timeInfo = getServerTimeInfo();
     timeOffset = timeInfo.offset;
     log("时间偏差(ms): " + timeOffset);
@@ -1280,6 +1292,13 @@ function main() {
     // 检查无障碍服务
     auto.waitFor();
     
+    // 加载保存的时间源
+    var storage = storages.create("autoshop_settings");
+    var savedTimeSource = storage.get("timeSource");
+    if (savedTimeSource) {
+        currentTimeSource = savedTimeSource;
+    }
+    
     while(1){
         // 显示主菜单
         var mode = showMainMenu();
@@ -1287,6 +1306,9 @@ function main() {
         if (mode === "setup") {
             // 进入设置模式
             setupMode();
+        } else if (mode === "setTimeSource") {
+            // 设置时间源
+            selectTimeSource();
         } else if (mode === "run") {
             // 进入运行模式
             runMode();
@@ -1308,30 +1330,214 @@ function main() {
 /**
  * 获取京东服务器时间
  */
-function getServerTimeInfo() {
-    var url = "https://www.jd.com";
+/**
+ * 选择时间源
+ */
+function selectTimeSource() {
+    var sources = [
+        { name: "华为云", value: "huawei" },
+        { name: "阿里巴巴", value: "alibaba" },
+        { name: "腾讯", value: "tencent" },
+        { name: "拼多多", value: "pinduoduo" },
+        { name: "京东", value: "jd" }
+    ];
+    
+    var sourceNames = sources.map(function(s) { return s.name; });
+    var choice = dialogs.select("选择时间同步源", sourceNames);
+    
+    if (choice >= 0) {
+        currentTimeSource = sources[choice].value;
+        var storage = storages.create("autoshop_settings");
+        storage.put("timeSource", currentTimeSource);
+        dialogs.alert("成功", "已设置为: " + sourceNames[choice]);
+        log("时间源已切换为: " + sourceNames[choice]);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * 带延迟补偿的网络时间获取 (改进版)
+ * @param {string} url - 服务器地址
+ * @return {object} {serverMs, rtt} 或 null
+ */
+function fetchServerTimeWithRTT(url) {
     try {
+        var startTime = Date.now();
         var res = http.get(url);
+        var endTime = Date.now();
+        
         if (res.statusCode != 200) {
             throw "HTTP " + res.statusCode;
         }
-
-        var headers = res.headers;
-        var dateStr = headers["Date"] || headers["date"];
+        
+        var dateStr = res.headers["Date"] || res.headers["date"];
         if (!dateStr) {
             throw "no Date header";
         }
-
+        
+        // 解析服务器时间
         var serverMs = new Date(dateStr).getTime();
+        
+        // 计算往返延迟 (RTT)
+        var rtt = endTime - startTime;
+        
+        // 补偿：假设网络延迟一半在上行，一半在下行
+        var estimatedServerTime = serverMs + (rtt / 2);
+        
+        return {
+            serverMs: estimatedServerTime,
+            rtt: rtt,
+            rawServerMs: serverMs
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * 从华为云获取时间 (改进版)
+ */
+function getTimeFromHuawei() {
+    var url = "https://www.huaweicloud.com/";
+    try {
+        var result = fetchServerTimeWithRTT(url);
+        if (!result) {
+            throw "获取失败";
+        }
+        log("华为云: 网络延迟 " + result.rtt + "ms, 补偿后时间");
+        return result.serverMs;
+    } catch (e) {
+        log("华为云获取时间失败: " + e);
+        return null;
+    }
+}
+
+/**
+ * 从阿里巴巴获取时间
+ */
+function getTimeFromAlibaba() {
+    var url = "https://www.alibaba.com/";
+    try {
+        var result = fetchServerTimeWithRTT(url);
+        if (!result) {
+            throw "获取失败";
+        }
+        log("阿里巴巴: 网络延迟 " + result.rtt + "ms, 补偿后时间");
+        return result.serverMs;
+    } catch (e) {
+        log("阿里巴巴获取时间失败: " + e);
+        return null;
+    }
+}
+
+/**
+ * 从腾讯获取时间
+ */
+function getTimeFromTencent() {
+    var url = "https://www.tencent.com/";
+    try {
+        var result = fetchServerTimeWithRTT(url);
+        if (!result) {
+            throw "获取失败";
+        }
+        log("腾讯: 网络延迟 " + result.rtt + "ms, 补偿后时间");
+        return result.serverMs;
+    } catch (e) {
+        log("腾讯获取时间失败: " + e);
+        return null;
+    }
+}
+
+/**
+ * 从拼多多获取时间
+ */
+function getTimeFromPinduoduo() {
+    var url = "https://www.pinduoduo.com/";
+    try {
+        var result = fetchServerTimeWithRTT(url);
+        if (!result) {
+            throw "获取失败";
+        }
+        log("拼多多: 网络延迟 " + result.rtt + "ms, 补偿后时间");
+        return result.serverMs;
+    } catch (e) {
+        log("拼多多获取时间失败: " + e);
+        return null;
+    }
+}
+
+/**
+ * 从京东获取时间
+ */
+function getTimeFromJD() {
+    var url = "https://www.jd.com";
+    try {
+        var result = fetchServerTimeWithRTT(url);
+        if (!result) {
+            throw "获取失败";
+        }
+        log("京东: 网络延迟 " + result.rtt + "ms, 补偿后时间");
+        return result.serverMs;
+    } catch (e) {
+        log("京东获取时间失败: " + e);
+        return null;
+    }
+}
+
+/**
+ * 根据时间源获取服务器时间
+ */
+function getServerTimeBySource() {
+    var serverMs = null;
+    
+    switch (currentTimeSource) {
+        case "huawei":
+            serverMs = getTimeFromHuawei();
+            break;
+        case "alibaba":
+            serverMs = getTimeFromAlibaba();
+            break;
+        case "tencent":
+            serverMs = getTimeFromTencent();
+            break;
+        case "pinduoduo":
+            serverMs = getTimeFromPinduoduo();
+            break;
+        case "jd":
+        default:
+            serverMs = getTimeFromJD();
+            break;
+    }
+    
+    return serverMs;
+}
+
+function getServerTimeInfo() {
+    var serverMs = getServerTimeBySource();
+    var sourceNames = {
+        "huawei": "华为云",
+        "alibaba": "阿里巴巴",
+        "tencent": "腾讯",
+        "pinduoduo": "拼多多",
+        "jd": "京东"
+    };
+    
+    try {
+        if (serverMs === null) {
+            throw "无法从 " + (sourceNames[currentTimeSource] || currentTimeSource) + " 获取时间";
+        }
+        
         var localMs = Date.now();
-        var offset = serverMs - localMs; 
+        var offset = serverMs - localMs;
+        log("时间源: " + (sourceNames[currentTimeSource] || currentTimeSource) + ", 偏差: " + offset + "ms");
         return {
             serverMs: serverMs,
             offset: offset
         };
     } catch (e) {
         log(e);
-        toast("从京东获取时间失败，改用本机时间");
+        toast("时间同步失败，请使用其他时钟源,或者改用本机时间");
         return {
             serverMs: Date.now(),
             offset: 0
