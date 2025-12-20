@@ -19,7 +19,7 @@ function showStartConfirmationFloaty() {
     
     // 创建悬浮窗
     var window = floaty.window(
-        <frame gravity="center" bg="#ffffff" padding="20">
+        <frame gravity="center" bg="#ecececff" padding="20">
             <linear orientation="vertical" gravity="center_horizontal" spacing="15">
                 <text text="京东定时抢购脚本" textColor="#000000" textSize="20sp" gravity="center" />
                 
@@ -161,11 +161,12 @@ function showClickFrequencyPickerFloaty(initialInterval, initialPressDuration, i
     var pressDuration = initialPressDuration;
     var totalDuration = initialTotalDuration;
     
-    // 创建悬浮窗
+    // 创建悬浮窗 - 使用深灰色外层和白色内容区域创建阴影效果
     var window = floaty.window(
-        <frame gravity="center" bg="#ffffff" padding="15">
-            <linear orientation="vertical" gravity="center_horizontal" spacing="10">
-                <text text="设置点击频率" textColor="#000000" textSize="18sp" gravity="center" />
+        <frame gravity="center" bg="#cccccc" padding="8">
+            <frame gravity="center" bg="#ffffff" padding="15">
+                <linear orientation="vertical" gravity="center_horizontal" spacing="10">
+                    <text text="设置点击频率" textColor="#000000" textSize="18sp" gravity="center" />
                 
                 <!-- 间隔 (interval) -->
                 <linear orientation="vertical" gravity="center_horizontal" spacing="5">
@@ -209,12 +210,13 @@ function showClickFrequencyPickerFloaty(initialInterval, initialPressDuration, i
                     <button id="confirm_btn" text="✓ 确定" w="100" h="45" textSize="14sp" />
                     <button id="cancel_btn" text="✗ 取消" w="100" h="45" textSize="14sp" />
                 </linear>
-            </linear>
+                </linear>
+            </frame>
         </frame>
     );
     
-    // 等待窗口完全加载后再设置位置
-    sleep(100);
+    // 等待窗口完全加载后再设置位置 - 增加延迟确保窗口信息可用
+    sleep(300);
     
     // 获取屏幕和窗口信息，计算居中位置
     var screenWidth = device.width;
@@ -222,9 +224,22 @@ function showClickFrequencyPickerFloaty(initialInterval, initialPressDuration, i
     var windowWidth = window.getWidth();
     var windowHeight = window.getHeight();
     
+    log("屏幕: " + screenWidth + "x" + screenHeight + ", 窗口: " + windowWidth + "x" + windowHeight);
+    
+    // 如果窗口大小获取失败，使用默认值
+    if (windowWidth <= 0 || windowHeight <= 0) {
+        windowWidth = Math.min(900, screenWidth - 50);
+        windowHeight = Math.min(600, screenHeight - 100);
+    }
+    
     var centerX = (screenWidth - windowWidth) / 2;
     var centerY = (screenHeight - windowHeight) / 2;
     
+    // 确保坐标为整数
+    centerX = Math.round(centerX);
+    centerY = Math.round(centerY);
+    
+    log("窗口位置: " + centerX + ", " + centerY);
     window.setPosition(centerX, centerY);
     
     // 更新显示函数
@@ -1420,17 +1435,18 @@ function showAlarmClockPickerFloaty(initialH, initialM, initialS, initialD) {
     var s = initialS;
     var d = initialD;
     
-    // 创建悬浮窗
+    // 创建悬浮窗 - 使用深灰色外层和白色内容区域创建阴影效果
     var window = floaty.window(
-        <frame gravity="center" bg="#ffffff" padding="15">
-            <linear orientation="vertical" gravity="center_horizontal" spacing="10">
-                <text text="设置目标时间" textColor="#000000" textSize="18sp" gravity="center" />
-                
-                <!-- 显示当前本机时间 -->
-                <linear orientation="horizontal" gravity="center_horizontal" spacing="5" bg="#e3f2fd" padding="8">
-                    <text text="本机时间:" textColor="#1976d2" textSize="13sp" />
-                    <text id="current_time_display" text="00:00:00:0" textColor="#1976d2" textSize="13sp" />
-                </linear>
+        <frame gravity="center" bg="#cccccc" padding="8">
+            <frame gravity="center" bg="#ffffff" padding="15">
+                <linear orientation="vertical" gravity="center_horizontal" spacing="10">
+                    <text text="设置目标时间" textColor="#000000" textSize="18sp" gravity="center" />
+                    
+                    <!-- 显示当前本机时间 -->
+                    <linear orientation="horizontal" gravity="center_horizontal" spacing="5" bg="#e3f2fd" padding="8">
+                        <text text="本机时间:" textColor="#1976d2" textSize="13sp" />
+                        <text id="current_time_display" text="00:00:00:0" textColor="#1976d2" textSize="13sp" />
+                    </linear>
                 
                 <linear orientation="horizontal" gravity="center_horizontal" spacing="5">
                     <!-- HH -->
@@ -1472,12 +1488,13 @@ function showAlarmClockPickerFloaty(initialH, initialM, initialS, initialD) {
                     <button id="confirm_btn" text="✓ 确定" w="100" h="45" textSize="14sp" />
                     <button id="cancel_btn" text="✗ 取消" w="100" h="45" textSize="14sp" />
                 </linear>
-            </linear>
+                </linear>
+            </frame>
         </frame>
     );
     
-    // 等待窗口完全加载后再设置位置（确保能获取正确的窗口大小）
-    sleep(100);
+    // 等待窗口完全加载后再设置位置 - 增加延迟确保窗口信息可用
+    sleep(300);
     
     // 获取屏幕和窗口信息
     var screenWidth = device.width;
@@ -1485,14 +1502,24 @@ function showAlarmClockPickerFloaty(initialH, initialM, initialS, initialD) {
     var windowWidth = window.getWidth();
     var windowHeight = window.getHeight();
     
+    log("屏幕尺寸: " + screenWidth + "x" + screenHeight);
+    log("窗口尺寸: " + windowWidth + "x" + windowHeight);
+    
+    // 如果窗口大小获取失败，使用默认值
+    if (windowWidth <= 0 || windowHeight <= 0) {
+        windowWidth = Math.min(900, screenWidth - 50);
+        windowHeight = Math.min(650, screenHeight - 100);
+    }
+    
     // 计算居中位置
     var centerX = (screenWidth - windowWidth) / 2;
     var centerY = (screenHeight - windowHeight) / 2;
     
-    log("屏幕尺寸: " + screenWidth + "x" + screenHeight);
-    log("窗口尺寸: " + windowWidth + "x" + windowHeight);
-    log("窗口位置: " + centerX + ", " + centerY);
+    // 确保坐标为整数
+    centerX = Math.round(centerX);
+    centerY = Math.round(centerY);
     
+    log("窗口位置: " + centerX + ", " + centerY);
     window.setPosition(centerX, centerY);
     
     // 更新显示函数
