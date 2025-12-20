@@ -1,4 +1,4 @@
-# ClickNow - 定时自动化工具
+# TimedClick - 定时自动化工具
 
 <div align="center">
 
@@ -202,9 +202,10 @@
 | 权限 | 用途 | 必需 |
 |------|------|------|
 | `SYSTEM_ALERT_WINDOW` | 显示悬浮窗 | ✅ 是 |
-| `BIND_ACCESSIBILITY_SERVICE` | 自动点击 | ✅ 是 |
-| `INTERNET` | 同步服务器时间 | ✅ 是 |
-| `VIBRATE` | 震动反馈 | ⚠️ 可选 |
+| `Accessibility Permission` | 无障碍 | ✅ 是 |
+| `Battery Optimization` | 关闭电量优化 | ⚠️ 可选 |
+| `Auto-launch Management` | 开启自启动 | ⚠️ 可选 |
+
 
 ### Q2: 为什么时间还是不准确？
 
@@ -276,7 +277,7 @@
 
 ```bash
 # 1. Fork 项目
-git clone https://github.com/yourusername/ClickNow.git
+git clone https://github.com/yourusername/TimedClick.git
 
 # 2. 创建功能分支
 git checkout -b feature/YourFeature
@@ -322,6 +323,6 @@ git push origin feature/YourFeature
 
 **⭐ 如果这个项目对你有帮助，请给个 Star 支持一下！**
 
-Made with ❤️ by ClickNow Team
+Made with ❤️ by TimedClick Team
 
 </div>
