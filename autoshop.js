@@ -587,47 +587,52 @@ function main() {
     // 5. 显示点击区域
     showClickArea();
 
-    // 6. 开启时间刷新与检测线程
-    threads.start(function() {
-        var hasResyncedAt1Minute = false; // 标记是否已在1分钟时重新同步
-        
-        while (isRunning) {
-            var now = Date.now() + timeOffset;
-            var timeUntilTarget = targetTimestamp - now; // 距离目标时间的毫秒数
-            
-            // 在触发时间开始前1分钟（60000ms）时，再精确同步一次
-            if (timeUntilTarget <= 60000 && timeUntilTarget > 55000 && !hasResyncedAt1Minute) {
-                log("距离目标时间1分钟以内，准备精确同步时间...");
-                var timeInfo = getServerTimeInfo();
-                timeOffset = timeInfo.offset;
-                log("已重新同步时间偏差(ms): " + timeOffset);
-                toast("已精确同步时间，偏差: " + timeOffset + "ms");
-                hasResyncedAt1Minute = true;
-            }
-            
-            // 更新悬浮窗时间
-            updateFloatyTime(now);
-
-            // 检查是否到达时间
-            if (now >= targetTimestamp) {
-                // 停止刷新UI，准备点击
-                ui.run(function() {
-                    if(window) window.text.setText("执行中...");
-                    if(window) window.text.setTextColor(colors.RED);
-                });
-                
-                // 执行点击任务
-                executeClickTask();
-                
-                // 任务完成
-                handleFinish();
-                break;
-            }
-            
-            // 提高检测频率以匹配 0.1s 精度
-            sleep(5);
+    // 6. 使用setTimeout代替轮询来监听时间
+    var hasResyncedAt1Minute = false; // 标记是否已在1分钟时重新同步
+    
+    function timeCheckCallback() {
+        if (!isRunning) {
+            return;
         }
-    });
+        
+        var now = Date.now() + timeOffset;
+        var timeUntilTarget = targetTimestamp - now; // 距离目标时间的毫秒数
+        
+        // 在触发时间开始前1分钟（60000ms）时，再精确同步一次
+        if (timeUntilTarget <= 60000 && timeUntilTarget > 55000 && !hasResyncedAt1Minute) {
+            log("距离目标时间1分钟以内，准备精确同步时间...");
+            var timeInfo = getServerTimeInfo();
+            timeOffset = timeInfo.offset;
+            log("已重新同步时间偏差(ms): " + timeOffset);
+            toast("已精确同步时间，偏差: " + timeOffset + "ms");
+            hasResyncedAt1Minute = true;
+        }
+        
+        // 更新悬浮窗时间
+        updateFloatyTime(now);
+
+        // 检查是否到达时间
+        if (now >= targetTimestamp) {
+            // 停止刷新UI，准备点击
+            ui.run(function() {
+                if(window) window.text.setText("执行中...");
+                if(window) window.text.setTextColor(colors.RED);
+            });
+            
+            // 执行点击任务
+            executeClickTask();
+            
+            // 任务完成
+            handleFinish();
+            return;
+        }
+        
+        // 继续监听，每100ms检查一次（提高精度但不过度耗电）
+        setTimeout(timeCheckCallback, 100);
+    }
+    
+    // 启动时间检测
+    timeCheckCallback();
 }
 
 // ==============================
