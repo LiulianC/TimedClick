@@ -10,6 +10,77 @@
  */
 
 /**
+ * 显示启动确认悬浮窗
+ * @return {boolean} 用户是否点击了开始，true为开始，false为退出
+ */
+function showStartConfirmationFloaty() {
+    var confirmed = false;
+    var finished = false;
+    
+    // 创建悬浮窗
+    var window = floaty.window(
+        <frame gravity="center" bg="#ffffff" padding="20">
+            <linear orientation="vertical" gravity="center_horizontal" spacing="15">
+                <text text="京东定时抢购脚本" textColor="#000000" textSize="20sp" gravity="center" />
+                
+                <linear orientation="vertical" gravity="center_horizontal" spacing="5">
+                    <text text="脚本已准备就绪,切换到应用后" textColor="#666666" textSize="14sp" gravity="center" />
+                    <text text="点击【开始】按钮继续" textColor="#666666" textSize="14sp" gravity="center" />
+                </linear>
+                
+                <linear orientation="horizontal" gravity="center_horizontal" spacing="10" h="50">
+                    <button id="start_btn" text="▶ 开始" w="120" h="50" textSize="16sp" />
+                    <button id="exit_btn" text="✕ 退出" w="120" h="50" textSize="16sp" />
+                </linear>
+            </linear>
+        </frame>
+    );
+    
+    // 等待窗口完全加载后再设置位置
+    sleep(100);
+    
+    // 获取屏幕和窗口信息，计算居中位置
+    var screenWidth = device.width;
+    var screenHeight = device.height;
+    var windowWidth = window.getWidth();
+    var windowHeight = window.getHeight();
+    
+    var centerX = (screenWidth - windowWidth) / 2;
+    var centerY = (screenHeight - windowHeight) / 2;
+    
+    window.setPosition(centerX, centerY);
+    
+    // 开始按钮
+    try {
+        window.start_btn.click(function() {
+            confirmed = true;
+            finished = true;
+        });
+    } catch(e) {
+        log("开始按钮绑定失败: " + e);
+    }
+    
+    // 退出按钮
+    try {
+        window.exit_btn.click(function() {
+            confirmed = false;
+            finished = true;
+        });
+    } catch(e) {
+        log("退出按钮绑定失败: " + e);
+    }
+    
+    // 等待用户交互
+    while (!finished) {
+        sleep(100);
+    }
+    
+    // 关闭窗口
+    window.close();
+    return confirmed;
+}
+
+/**
  * 通过用户点击设置连点器坐标（取最后一次点击）
  */
 function setClickCoordinatesByTouching() {
@@ -38,6 +109,262 @@ function setClickCoordinatesByTouching() {
     
     return true;
 }
+
+/**
+ * 设置点击频率配置（interval、pressDuration、totalDuration）
+ */
+function setClickFrequency() {
+    var result = showClickFrequencyPickerFloaty(
+        CONFIG.interval,
+        CONFIG.pressDuration,
+        CONFIG.totalDuration
+    );
+    
+    if (result === null) {
+        return false;
+    }
+    
+    CONFIG.interval = result.interval;
+    CONFIG.pressDuration = result.pressDuration;
+    CONFIG.totalDuration = result.totalDuration;
+    
+    log("点击频率已设置: interval=" + CONFIG.interval + "ms, pressDuration=" + CONFIG.pressDuration + "ms, totalDuration=" + CONFIG.totalDuration + "ms");
+    dialogs.alert("设置完成", "间隔: " + CONFIG.interval + "ms\n持续时间: " + CONFIG.pressDuration + "ms\n总时长: " + CONFIG.totalDuration + "ms\n点击频率: " + calculateClicksPerSecond(CONFIG.interval, CONFIG.pressDuration) + " 次/秒");
+    
+    return true;
+}
+
+/**
+ * 计算每秒点击次数
+ * @param {number} interval 点击间隔 (ms)
+ * @param {number} pressDuration 点击持续时间 (ms)
+ * @return {number} 每秒点击次数（舍去小数）
+ */
+function calculateClicksPerSecond(interval, pressDuration) {
+    return Math.floor(1000 / (interval + pressDuration));
+}
+
+/**
+ * 显示点击频率设置器（悬浮窗版本）
+ * 在一个悬浮窗中通过按钮微调来设置 interval、pressDuration、totalDuration
+ * @param {number} initialInterval 初始间隔 (ms)
+ * @param {number} initialPressDuration 初始持续时间 (ms)
+ * @param {number} initialTotalDuration 初始总时长 (ms)
+ * @return {object|null} {interval, pressDuration, totalDuration} 或 null 取消
+ */
+function showClickFrequencyPickerFloaty(initialInterval, initialPressDuration, initialTotalDuration) {
+    var result = null;
+    var finished = false;
+    
+    // 初始化变量
+    var interval = initialInterval;
+    var pressDuration = initialPressDuration;
+    var totalDuration = initialTotalDuration;
+    
+    // 创建悬浮窗
+    var window = floaty.window(
+        <frame gravity="center" bg="#ffffff" padding="15">
+            <linear orientation="vertical" gravity="center_horizontal" spacing="10">
+                <text text="设置点击频率" textColor="#000000" textSize="18sp" gravity="center" />
+                
+                <!-- 间隔 (interval) -->
+                <linear orientation="vertical" gravity="center_horizontal" spacing="5">
+                    <text text="间隔 (ms)" textColor="#666666" textSize="12sp" gravity="center" />
+                    <linear orientation="horizontal" gravity="center_horizontal" spacing="5">
+                        <button id="interval_up" text="▲" w="40" h="35" textSize="14sp" />
+                        <text id="interval_display" text="30" textColor="#000000" textSize="28sp" gravity="center" w="80" />
+                        <button id="interval_down" text="▼" w="40" h="35" textSize="14sp" />
+                    </linear>
+                </linear>
+                
+                <!-- 持续时间 (pressDuration) -->
+                <linear orientation="vertical" gravity="center_horizontal" spacing="5">
+                    <text text="持续时间 (ms)" textColor="#666666" textSize="12sp" gravity="center" />
+                    <linear orientation="horizontal" gravity="center_horizontal" spacing="5">
+                        <button id="duration_up" text="▲" w="40" h="35" textSize="14sp" />
+                        <text id="duration_display" text="40" textColor="#000000" textSize="28sp" gravity="center" w="80" />
+                        <button id="duration_down" text="▼" w="40" h="35" textSize="14sp" />
+                    </linear>
+                </linear>
+                
+                <!-- 总时长 (totalDuration) -->
+                <linear orientation="vertical" gravity="center_horizontal" spacing="5">
+                    <text text="总时长 (ms)" textColor="#666666" textSize="12sp" gravity="center" />
+                    <linear orientation="horizontal" gravity="center_horizontal" spacing="5">
+                        <button id="total_up" text="▲" w="40" h="35" textSize="14sp" />
+                        <text id="total_display" text="3000" textColor="#000000" textSize="28sp" gravity="center" w="80" />
+                        <button id="total_down" text="▼" w="40" h="35" textSize="14sp" />
+                    </linear>
+                </linear>
+                
+                <!-- 点击频率显示 -->
+                <linear orientation="horizontal" gravity="center_horizontal" spacing="5" bg="#e8f5e9" padding="10">
+                    <text text="点击频率:" textColor="#2e7d32" textSize="14sp" />
+                    <text id="cps_display" text="25" textColor="#2e7d32" textSize="14sp" />
+                    <text text="次/秒" textColor="#2e7d32" textSize="14sp" />
+                </linear>
+                
+                <!-- 确定和取消按钮 -->
+                <linear orientation="horizontal" gravity="center_horizontal" spacing="10" h="45">
+                    <button id="confirm_btn" text="✓ 确定" w="100" h="45" textSize="14sp" />
+                    <button id="cancel_btn" text="✗ 取消" w="100" h="45" textSize="14sp" />
+                </linear>
+            </linear>
+        </frame>
+    );
+    
+    // 等待窗口完全加载后再设置位置
+    sleep(100);
+    
+    // 获取屏幕和窗口信息，计算居中位置
+    var screenWidth = device.width;
+    var screenHeight = device.height;
+    var windowWidth = window.getWidth();
+    var windowHeight = window.getHeight();
+    
+    var centerX = (screenWidth - windowWidth) / 2;
+    var centerY = (screenHeight - windowHeight) / 2;
+    
+    window.setPosition(centerX, centerY);
+    
+    // 更新显示函数
+    function updateDisplay() {
+        ui.run(function() {
+            window.interval_display.setText("" + interval);
+            window.duration_display.setText("" + pressDuration);
+            window.total_display.setText("" + totalDuration);
+            var cps = calculateClicksPerSecond(interval, pressDuration);
+            window.cps_display.setText("" + cps);
+        });
+    }
+    
+    // 初始显示
+    updateDisplay();
+    
+    // 长按状态记录
+    var longPressStates = {
+        interval_up: { pressing: false, interval: null },
+        interval_down: { pressing: false, interval: null },
+        duration_up: { pressing: false, interval: null },
+        duration_down: { pressing: false, interval: null },
+        total_up: { pressing: false, interval: null },
+        total_down: { pressing: false, interval: null }
+    };
+    
+    // 创建按钮长按处理函数
+    function makeButtonHandler(buttonId, decreaseCallback, increaseCallback) {
+        return function(view, event) {
+            var action = event.getAction();
+            var state = longPressStates[buttonId];
+            
+            if (action == event.ACTION_DOWN) {
+                state.pressing = true;
+                // 立即执行一次
+                if (buttonId.indexOf("up") >= 0) {
+                    decreaseCallback();
+                } else {
+                    increaseCallback();
+                }
+                updateDisplay();
+                
+                // 100ms后开始重复
+                state.interval = setInterval(function() {
+                    if (state.pressing) {
+                        if (buttonId.indexOf("up") >= 0) {
+                            decreaseCallback();
+                        } else {
+                            increaseCallback();
+                        }
+                        updateDisplay();
+                    }
+                }, 100);
+                
+                return true;
+            } else if (action == event.ACTION_UP || action == event.ACTION_CANCEL) {
+                state.pressing = false;
+                if (state.interval !== null) {
+                    clearInterval(state.interval);
+                    state.interval = null;
+                }
+                return true;
+            }
+            
+            return false;
+        };
+    }
+    
+    // 绑定间隔按钮事件
+    try {
+        window.interval_up.setOnTouchListener(makeButtonHandler("interval_up",
+            function() { interval = Math.max(5, interval - 5); },
+            function() { interval = interval + 5; }
+        ));
+        window.interval_down.setOnTouchListener(makeButtonHandler("interval_down",
+            function() { interval = Math.max(5, interval - 5); },
+            function() { interval = interval + 5; }
+        ));
+    } catch(e) {
+        log("间隔按钮绑定失败: " + e);
+    }
+    
+    // 绑定持续时间按钮事件
+    try {
+        window.duration_up.setOnTouchListener(makeButtonHandler("duration_up",
+            function() { pressDuration = Math.max(5, pressDuration - 5); },
+            function() { pressDuration = pressDuration + 5; }
+        ));
+        window.duration_down.setOnTouchListener(makeButtonHandler("duration_down",
+            function() { pressDuration = Math.max(5, pressDuration - 5); },
+            function() { pressDuration = pressDuration + 5; }
+        ));
+    } catch(e) {
+        log("持续时间按钮绑定失败: " + e);
+    }
+    
+    // 绑定总时长按钮事件
+    try {
+        window.total_up.setOnTouchListener(makeButtonHandler("total_up",
+            function() { totalDuration = Math.max(100, totalDuration - 100); },
+            function() { totalDuration = totalDuration + 100; }
+        ));
+        window.total_down.setOnTouchListener(makeButtonHandler("total_down",
+            function() { totalDuration = Math.max(100, totalDuration - 100); },
+            function() { totalDuration = totalDuration + 100; }
+        ));
+    } catch(e) {
+        log("总时长按钮绑定失败: " + e);
+    }
+    
+    // 确定按钮
+    try {
+        window.confirm_btn.click(function() {
+            result = { interval: interval, pressDuration: pressDuration, totalDuration: totalDuration };
+            finished = true;
+        });
+    } catch(e) {
+        log("确定按钮绑定失败: " + e);
+    }
+    
+    // 取消按钮
+    try {
+        window.cancel_btn.click(function() {
+            result = null;
+            finished = true;
+        });
+    } catch(e) {
+        log("取消按钮绑定失败: " + e);
+    }
+    
+    // 等待用户交互
+    while (!finished) {
+        sleep(100);
+    }
+    
+    // 关闭窗口
+    window.close();
+    return result;
+}
+
 
 // ==============================
 // 0. 工具函数 - 获取点击坐标
@@ -225,6 +552,12 @@ function main() {
     // 检查无障碍服务
     auto.waitFor();
     
+    // 0. 显示启动确认窗口，等待用户确认
+    if (!showStartConfirmationFloaty()) {
+        toast("脚本已退出");
+        return;
+    }
+    
     // 1. 初始化：获取时间偏移
     toast("正在同步京东服务器时间...");
     var timeInfo = getServerTimeInfo();
@@ -244,6 +577,9 @@ function main() {
 
     // 3. 用户交互：设置连点坐标
     setClickCoordinatesByTouching();
+
+    // 3.5 用户交互：设置点击频率
+    setClickFrequency();
 
     // 4. 初始化悬浮窗
     initFloatyWindow();
