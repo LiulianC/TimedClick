@@ -883,7 +883,78 @@ function runMode() {
 }
 
 /**
- * 调度下一个任务
+ * 按触发时间戳顺序调度任务
+ * @param {array} taskTimestamps 排序后的任务时间戳数组
+ * @param {number} index 当前任务在排序数组中的索引
+ */
+function scheduleNextTaskByTimestamp(taskTimestamps, index) {
+    if (index >= taskTimestamps.length) {
+        log("所有任务已完成");
+        handleFinish();
+        return;
+    }
+    
+    var item = taskTimestamps[index];
+    currentTask = item.task;
+    var originalTaskIndex = item.index;
+    targetTimestamp = item.timestamp;
+    
+    log("准备执行任务 " + (originalTaskIndex + 1) + " (" + (index + 1) + "/" + taskTimestamps.length + ")");
+    log("触发时间戳: " + targetTimestamp + " (" + formatTime(targetTimestamp) + ")");
+
+    // 启动时间监听
+    var hasResyncedAt1Minute = false;
+    
+    function timeCheckCallback() {
+        if (!isRunning) {
+            return;
+        }
+        
+        var now = Date.now() + timeOffset;
+        var timeUntilTarget = targetTimestamp - now;
+        
+        // 在触发时间开始前1分钟时，再精确同步一次
+        if (timeUntilTarget <= 60000 && timeUntilTarget > 55000 && !hasResyncedAt1Minute) {
+            log("距离任务 " + (originalTaskIndex + 1) + " 还有1分钟，准备精确同步时间...");
+            var timeInfo = getServerTimeInfo();
+            timeOffset = timeInfo.offset;
+            log("已重新同步时间偏差(ms): " + timeOffset);
+            toast("已精确同步时间");
+            hasResyncedAt1Minute = true;
+        }
+        
+        // 更新悬浮窗时间
+        updateFloatyTime(now);
+
+        // 检查是否到达时间
+        if (now >= targetTimestamp) {
+            log("任务 " + (originalTaskIndex + 1) + " 触发时间已到");
+            toast("执行任务 " + (originalTaskIndex + 1));
+            
+            ui.run(function() {
+                if(window) window.text.setText("任务 " + (originalTaskIndex + 1) + " 执行中...");
+                if(window) window.text.setTextColor(colors.RED);
+            });
+            
+            // 使用当前任务的参数执行点击
+            executeTaskClickWithParams(currentTask);
+            
+            // 调度下一个任务
+            sleep(500); // 短暂延迟
+            scheduleNextTaskByTimestamp(taskTimestamps, index + 1);
+            return;
+        }
+        
+        // 继续监听，每100ms检查一次
+        setTimeout(timeCheckCallback, 100);
+    }
+    
+    // 启动时间检测
+    timeCheckCallback();
+}
+
+/**
+ * 调度下一个任务（已废弃，使用 scheduleNextTaskByTimestamp 替代）
  */
 function scheduleNextTask() {
     if (currentTaskIndex >= taskList.length) {
