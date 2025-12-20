@@ -84,12 +84,12 @@ function showStartConfirmationFloaty() {
  * 通过用户点击设置连点器坐标（取最后一次点击）
  */
 function setClickCoordinatesByTouching() {
-    var choice = dialogs.confirm("设置连点坐标", "是否通过点击屏幕来设置连点坐标？\n\n可反复点击调整位置，双击窗口停止");
+    var choice = dialogs.confirm("设置连点坐标", "是否通过点击屏幕来设置连点坐标？\n\n可反复点击调整位置，双击悬浮窗停止");
     if (!choice) {
         return false;
     }
     
-    dialogs.alert("提示", "准备开始！\n\n请在屏幕上点击要连点的位置\n可点击多次调整，最后一次点击的位置将被使用\n\n双击悬浮窗停止");
+    //dialogs.alert("提示", "准备开始！\n\n请在屏幕上点击要连点的位置\n可点击多次调整，最后一次点击的位置将被使用\n\n双击悬浮窗停止");
     
     // 获取用户的多次点击
     var coordinates = getTouchCoordinates(-1, true);
@@ -544,51 +544,162 @@ var window = null; // 时间悬浮窗
 var overlayWindow = null; // 点击区域显示窗口
 var isRunning = true;
 
+// 储存配置的键名
+var STORAGE_KEY_TARGET_TIME = "jd_target_time";
+var STORAGE_KEY_CLICK_X = "jd_click_x";
+var STORAGE_KEY_CLICK_Y = "jd_click_y";
+var STORAGE_KEY_INTERVAL = "jd_interval";
+var STORAGE_KEY_PRESS_DURATION = "jd_press_duration";
+var STORAGE_KEY_TOTAL_DURATION = "jd_total_duration";
+
 // ==============================
-// 2. 程序入口
+// 2. 设置管理 - 保存和加载配置
 // ==============================
 
-function main() {
-    // 检查无障碍服务
-    auto.waitFor();
+/**
+ * 保存用户设置到存储
+ */
+function saveSettings() {
+    var settings = {
+        targetTime: CONFIG.defaultTargetTime,
+        clickX: CONFIG.clickX,
+        clickY: CONFIG.clickY,
+        interval: CONFIG.interval,
+        pressDuration: CONFIG.pressDuration,
+        totalDuration: CONFIG.totalDuration
+    };
     
-    // 0. 显示启动确认窗口，等待用户确认
-    if (!showStartConfirmationFloaty()) {
-        toast("脚本已退出");
-        return;
+    storages.create("autoshop_settings").put("settings", JSON.stringify(settings));
+    log("设置已保存");
+}
+
+/**
+ * 加载用户设置
+ */
+function loadSettings() {
+    try {
+        var storage = storages.create("autoshop_settings");
+        var settingsStr = storage.get("settings");
+        
+        if (settingsStr) {
+            var settings = JSON.parse(settingsStr);
+            CONFIG.defaultTargetTime = settings.targetTime || CONFIG.defaultTargetTime;
+            CONFIG.clickX = settings.clickX || CONFIG.clickX;
+            CONFIG.clickY = settings.clickY || CONFIG.clickY;
+            CONFIG.interval = settings.interval || CONFIG.interval;
+            CONFIG.pressDuration = settings.pressDuration || CONFIG.pressDuration;
+            CONFIG.totalDuration = settings.totalDuration || CONFIG.totalDuration;
+            log("已加载上次保存的设置");
+            return true;
+        } else {
+            log("未找到保存的设置，使用默认配置");
+            return false;
+        }
+    } catch (e) {
+        log("加载设置失败: " + e);
+        return false;
+    }
+}
+
+/**
+ * 显示主菜单，让用户选择"设置"或"运行"
+ */
+function showMainMenu() {
+    var options = ["⚙️ 设置", "▶️ 运行"];
+    var choice = dialogs.select("京东定时抢购脚本", options);
+    
+    if (choice === 0) {
+        return "setup";
+    } else if (choice === 1) {
+        return "run";
+    } else {
+        return null;
+    }
+}
+
+/**
+ * 设置流程 - 用户设置各项参数并保存
+ */
+function setupMode() {
+    log("进入设置模式");
+    toast("进入设置模式");
+    
+    // 1. 设置目标时间
+    log("步骤 1: 设置目标时间");
+    if (!setUserTargetTime()) {
+        toast("设置已取消");
+        return false;
     }
     
-    // 1. 初始化：获取时间偏移
+    // 2. 设置连点坐标
+    log("步骤 2: 设置连点坐标");
+    var choice = dialogs.confirm("设置连点坐标", "是否现在设置连点坐标？");
+    if (choice) {
+        setClickCoordinatesByTouching();
+    }
+    
+    // 3. 设置点击参数
+    log("步骤 3: 设置点击参数");
+    choice = dialogs.confirm("设置点击参数", "是否现在设置点击参数？");
+    if (choice) {
+        setClickFrequency();
+    }
+    
+    // 4. 保存设置
+    log("步骤 4: 保存设置");
+    saveSettings();
+    dialogs.alert("设置完成", "所有设置已保存。下次运行时将自动加载这些设置。");
+    
+    return true;
+}
+
+/**
+ * 运行流程 - 使用已保存的设置执行任务
+ */
+function runMode() {
+    log("进入运行模式");
+    
+    // 0. 加载上次的设置
+    loadSettings();
+    
+    // 1. 显示启动确认窗口
+    if (!showStartConfirmationFloaty()) {
+        toast("脚本已退出");
+        return false;
+    }
+    
+    // 2. 初始化：同步服务器时间
     toast("正在同步京东服务器时间...");
     var timeInfo = getServerTimeInfo();
     timeOffset = timeInfo.offset;
     log("时间偏差(ms): " + timeOffset);
     toast("时间同步完成，偏差: " + timeOffset + "ms");
 
-    // 弹窗提示当前北京时间（0.1s 精度）
-    var nowStr = formatTime(Date.now() + timeOffset);
-    dialogs.alert("当前北京时间", nowStr);
-
-    // 2. 用户交互：设置目标时间
-    if (!setUserTargetTime()) {
-        toast("取消运行");
-        return;
-    }
-
-    // 3. 用户交互：设置连点坐标
-    setClickCoordinatesByTouching();
-
-    // 3.5 用户交互：设置点击频率
-    setClickFrequency();
-
-    // 4. 初始化悬浮窗
+    // 3. 初始化悬浮窗
     initFloatyWindow();
     
-    // 5. 显示点击区域
+    // 4. 显示点击区域
     showClickArea();
 
-    // 6. 使用setTimeout代替轮询来监听时间
-    var hasResyncedAt1Minute = false; // 标记是否已在1分钟时重新同步
+    // 5. 解析目标时间
+    var result = parseTimeString(CONFIG.defaultTargetTime);
+    if (!result.valid) {
+        toast("目标时间格式错误");
+        return false;
+    }
+    
+    var targetDate = new Date();
+    targetDate.setHours(result.h);
+    targetDate.setMinutes(result.m);
+    targetDate.setSeconds(result.s);
+    targetDate.setMilliseconds(result.d * 100);
+    
+    targetTimestamp = targetDate.getTime();
+    log("目标时间: " + CONFIG.defaultTargetTime);
+    log("目标时间戳: " + targetTimestamp);
+
+    // 6. 使用setTimeout监听时间
+    var hasResyncedAt1Minute = false;
     
     function timeCheckCallback() {
         if (!isRunning) {
@@ -596,15 +707,15 @@ function main() {
         }
         
         var now = Date.now() + timeOffset;
-        var timeUntilTarget = targetTimestamp - now; // 距离目标时间的毫秒数
+        var timeUntilTarget = targetTimestamp - now;
         
-        // 在触发时间开始前1分钟（60000ms）时，再精确同步一次
+        // 在触发时间开始前1分钟时，再精确同步一次
         if (timeUntilTarget <= 60000 && timeUntilTarget > 55000 && !hasResyncedAt1Minute) {
             log("距离目标时间1分钟以内，准备精确同步时间...");
             var timeInfo = getServerTimeInfo();
             timeOffset = timeInfo.offset;
             log("已重新同步时间偏差(ms): " + timeOffset);
-            toast("已精确同步时间，偏差: " + timeOffset + "ms");
+            toast("已精确同步时间");
             hasResyncedAt1Minute = true;
         }
         
@@ -613,26 +724,47 @@ function main() {
 
         // 检查是否到达时间
         if (now >= targetTimestamp) {
-            // 停止刷新UI，准备点击
             ui.run(function() {
                 if(window) window.text.setText("执行中...");
                 if(window) window.text.setTextColor(colors.RED);
             });
             
-            // 执行点击任务
             executeClickTask();
-            
-            // 任务完成
             handleFinish();
             return;
         }
         
-        // 继续监听，每100ms检查一次（提高精度但不过度耗电）
+        // 继续监听，每100ms检查一次
         setTimeout(timeCheckCallback, 100);
     }
     
     // 启动时间检测
     timeCheckCallback();
+    return true;
+}
+
+// ==============================
+// 2. 程序入口
+// ==============================
+
+function main() {
+    // 检查无障碍服务
+    auto.waitFor();
+    
+    while(1){
+        // 显示主菜单
+        var mode = showMainMenu();
+    
+        if (mode === "setup") {
+            // 进入设置模式
+            setupMode();
+        } else if (mode === "run") {
+            // 进入运行模式
+            runMode();
+        } else 
+            toast("脚本已退出");
+            break;
+    }
 }
 
 // ==============================
@@ -688,19 +820,10 @@ function setUserTargetTime() {
         return false;
     }
     
-    var targetDate = new Date();
-    targetDate.setHours(result.h);
-    targetDate.setMinutes(result.m);
-    targetDate.setSeconds(result.s);
-    targetDate.setMilliseconds(result.d * 100); // 0.1s 精度
-
-    if (targetDate.getTime() < Date.now()) {
-        toast("注意：设置的时间早于当前时间，将立即执行或无效");
-    }
-
-    targetTimestamp = targetDate.getTime();
-    targetDeci = result.d;
-    targetTimeStr = result.formatted;
+    CONFIG.defaultTargetTime = result.formatted;
+    log("目标时间已设置: " + CONFIG.defaultTargetTime);
+    dialogs.alert("设置完成", "目标时间: " + CONFIG.defaultTargetTime);
+    
     return true;
 }
 
