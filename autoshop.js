@@ -1948,10 +1948,11 @@ function createTimeItemLayout(label, ui, key, min, max) {
  */
 function initFloatyWindow() {
     window = floaty.window(
-        <frame gravity="center" bg="#80000000" padding="10">
+        <frame id="main_frame" gravity="center" bg="#80000000" padding="10">
             <linear orientation="vertical" gravity="center_horizontal" spacing="3">
                 <text id="text" textSize="{{CONFIG.textSize}}sp" textColor="#ffffff" text="加载中..." />
                 <text id="task1_time" textSize="10sp" textColor="#cccccc" text="任务1: --:--:--:-" />
+                <text id="note" textSize="10sp" textColor="#cccccc" text="双击我暂停执行" />
             </linear>
         </frame>
     );
@@ -1959,12 +1960,16 @@ function initFloatyWindow() {
     window.setPosition(100, 100);
     window.exitOnClose();
 
-    // 悬浮窗拖动逻辑
+    // 悬浮窗拖动逻辑和双击退出
     var x = 0, y = 0;
     var windowX, windowY;
     var downTime;
+    var touchCount = 0;
+    var lastTouchTime = 0;
+    var doubleClickResetTimer = null;
 
-    window.text.setOnTouchListener(function(view, event) {
+    // 绑定到 main_frame 而不是单个 text 元素，这样整个窗口都可以响应触摸
+    window.main_frame.setOnTouchListener(function(view, event) {
         switch (event.getAction()) {
             case event.ACTION_DOWN:
                 x = event.getRawX();
@@ -1972,11 +1977,42 @@ function initFloatyWindow() {
                 windowX = window.getX();
                 windowY = window.getY();
                 downTime = new Date().getTime();
+                
+                // 双击检测
+                var currentTime = new Date().getTime();
+                touchCount++;
+                
+                // 清除之前的重置计时器
+                if (doubleClickResetTimer) {
+                    clearTimeout(doubleClickResetTimer);
+                }
+                
+                // 300ms 后重置计数
+                doubleClickResetTimer = setTimeout(function() {
+                    touchCount = 0;
+                }, 300);
+                
+                // 双击（连续两次点击）则停止
+                if (touchCount >= 2) {
+                    log("检测到双击悬浮窗，暂停执行");
+                    toast("已暂停执行");
+                    isRunning = false;
+                    touchCount = 0;
+                    if (doubleClickResetTimer) {
+                        clearTimeout(doubleClickResetTimer);
+                    }
+                }
+                
                 return true;
             case event.ACTION_MOVE:
-                // 移动手指时调整悬浮窗位置
-                window.setPosition(windowX + (event.getRawX() - x),
-                    windowY + (event.getRawY() - y));
+                // 只有在短时间内没有明显移动才认为是点击（而不是拖动）
+                var dx = Math.abs(event.getRawX() - x);
+                var dy = Math.abs(event.getRawY() - y);
+                if (dx > 10 || dy > 10) {
+                    // 移动距离大，进行拖动
+                    window.setPosition(windowX + (event.getRawX() - x),
+                        windowY + (event.getRawY() - y));
+                }
                 return true;
             case event.ACTION_UP:
                 return true;
