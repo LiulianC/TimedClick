@@ -834,6 +834,16 @@ function runMode() {
     // 3. 初始化悬浮窗
     initFloatyWindow();
     
+    // 设置任务1（主任务）的触发时间显示
+    if (taskList.length > 0 && taskList[0].targetTime) {
+        var task1TimeStr = taskList[0].targetTime;
+        ui.run(function() {
+            if (window && window.task1_time) {
+                window.task1_time.setText("任务1: " + task1TimeStr);
+            }
+        });
+    }
+    
     // 4. 显示点击区域
     toast("已加载 " + taskList.length + " 个任务");
     log("任务列表准备完毕");
@@ -1541,7 +1551,10 @@ function createTimeItemLayout(label, ui, key, min, max) {
 function initFloatyWindow() {
     window = floaty.window(
         <frame gravity="center" bg="#80000000" padding="10">
-            <text id="text" textSize="{{CONFIG.textSize}}sp" textColor="#ffffff" text="加载中..." />
+            <linear orientation="vertical" gravity="center_horizontal" spacing="3">
+                <text id="text" textSize="{{CONFIG.textSize}}sp" textColor="#ffffff" text="加载中..." />
+                <text id="task1_time" textSize="10sp" textColor="#cccccc" text="任务1: --:--:--:-" />
+            </linear>
         </frame>
     );
     
