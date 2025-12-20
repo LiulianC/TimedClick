@@ -75,7 +75,7 @@ function getTouchCoordinates(maxClicks, showUI) {
     if (showUI) {
         controlWindow = floaty.window(
             <frame gravity="center" bg="#aa000000" padding="10">
-                <text id="control" textSize="14sp" textColor="#ffffff" text="准备中...\n\n双击停止" />
+                <text id="control" textSize="14sp" textColor="#ffffff" text="准备中...\n\n双击我停止" />
             </frame>
         );
         controlWindow.setPosition(100, 100);
@@ -127,7 +127,7 @@ function getTouchCoordinates(maxClicks, showUI) {
             
             if (showUI && controlWindow) {
                 ui.run(function() {
-                    controlWindow.control.setText("共 " + clickCount + " 次\n(" + x + ", " + y + ")\n\n双击停止");
+                    controlWindow.control.setText("共 " + clickCount + " 次\n(" + x + ", " + y + ")\n\n双击我停止");
                 });
             }
             
@@ -382,7 +382,7 @@ function parseTimeString(timeStr) {
 }
 
 /**
- * 通过滑动选择器选择时间
+ * 通过闹钟式弹窗选择时间（HH:MM:SS:d）
  * @param {string} defaultTimeStr 默认时间字符串 HH:MM:SS:d
  * @return {string|null} 选择后的时间字符串，或 null 取消
  */
@@ -393,41 +393,264 @@ function pickTimeWithScroll(defaultTimeStr) {
     var s = parseInt(parts[2], 10) || 0;
     var d = parseInt(parts[3], 10) || 0;
 
-    // 选择小时
-    var hList = buildNumberList(0, 23);
-    h = dialogs.singleChoice("选择小时 (HH)", hList, h);
-    if (h < 0) return null;
-
-    // 选择分钟
-    var mList = buildNumberList(0, 59);
-    m = dialogs.singleChoice("选择分钟 (MM)", mList, m);
-    if (m < 0) return null;
-
-    // 选择秒
-    var sList = buildNumberList(0, 59);
-    s = dialogs.singleChoice("选择秒 (SS)", sList, s);
-    if (s < 0) return null;
-
-    // 选择 0.1 秒位
-    var dList = buildNumberList(0, 9);
-    d = dialogs.singleChoice("选择 0.1 秒位 (0-9)", dList, d);
-    if (d < 0) return null;
-
-    return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + ":" + d;
+    // 使用闹钟式时间选择器（基于悬浮窗）
+    var result = showAlarmClockPickerFloaty(h, m, s, d);
+    
+    if (result === null) {
+        return null;
+    }
+    
+    return pad2(result.h) + ":" + pad2(result.m) + ":" + pad2(result.s) + ":" + result.d;
 }
 
 /**
- * 构建数字列表（0-9、0-23、0-59等）
- * @param {number} min 最小值
- * @param {number} max 最大值
- * @return {array} 格式化的数字数组
+ * 显示闹钟式时间选择器（悬浮窗版本）
+ * 在一个悬浮窗中通过按钮微调来设置 HH:MM:SS:d
+ * 上箭头：数字减少 | 下箭头：数字增加
+ * 长按箭头可快速切换数字
+ * @param {number} initialH 初始小时
+ * @param {number} initialM 初始分钟
+ * @param {number} initialS 初始秒
+ * @param {number} initialD 初始 0.1秒位
+ * @return {object|null} {h, m, s, d} 或 null 取消
  */
-function buildNumberList(min, max) {
-    var list = [];
-    for (var i = min; i <= max; i++) {
-        list.push(pad2(i));
+function showAlarmClockPickerFloaty(initialH, initialM, initialS, initialD) {
+    var result = null;
+    var finished = false;
+    
+    // 初始化变量
+    var h = initialH;
+    var m = initialM;
+    var s = initialS;
+    var d = initialD;
+    
+    // 创建悬浮窗
+    var window = floaty.window(
+        <frame gravity="center" bg="#ffffff" padding="15">
+            <linear orientation="vertical" gravity="center_horizontal" spacing="10">
+                <text text="设置目标时间" textColor="#000000" textSize="18sp" gravity="center" />
+                
+                <linear orientation="horizontal" gravity="center_horizontal" spacing="5">
+                    <!-- HH -->
+                    <linear orientation="vertical" gravity="center_horizontal">
+                        <button id="h_up" text="▲" w="40" h="35" textSize="14sp" />
+                        <text id="h_display" text="00" textColor="#000000" textSize="36sp" gravity="center" w="50" />
+                        <button id="h_down" text="▼" w="40" h="35" textSize="14sp" />
+                    </linear>
+                    
+                    <text text=":" textColor="#000000" textSize="36sp" gravity="center" w="15" />
+                    
+                    <!-- MM -->
+                    <linear orientation="vertical" gravity="center_horizontal">
+                        <button id="m_up" text="▲" w="40" h="35" textSize="14sp" />
+                        <text id="m_display" text="00" textColor="#000000" textSize="36sp" gravity="center" w="50" />
+                        <button id="m_down" text="▼" w="40" h="35" textSize="14sp" />
+                    </linear>
+                    
+                    <text text=":" textColor="#000000" textSize="36sp" gravity="center" w="15" />
+                    
+                    <!-- SS -->
+                    <linear orientation="vertical" gravity="center_horizontal">
+                        <button id="s_up" text="▲" w="40" h="35" textSize="14sp" />
+                        <text id="s_display" text="00" textColor="#000000" textSize="36sp" gravity="center" w="50" />
+                        <button id="s_down" text="▼" w="40" h="35" textSize="14sp" />
+                    </linear>
+                    
+                    <text text="." textColor="#000000" textSize="36sp" gravity="center" w="12" />
+                    
+                    <!-- 0.1s -->
+                    <linear orientation="vertical" gravity="center_horizontal">
+                        <button id="d_up" text="▲" w="40" h="35" textSize="14sp" />
+                        <text id="d_display" text="0" textColor="#000000" textSize="36sp" gravity="center" w="40" />
+                        <button id="d_down" text="▼" w="40" h="35" textSize="14sp" />
+                    </linear>
+                </linear>
+                
+                <linear orientation="horizontal" gravity="center_horizontal" spacing="10" h="45">
+                    <button id="confirm_btn" text="✓ 确定" w="100" h="45" textSize="14sp" />
+                    <button id="cancel_btn" text="✗ 取消" w="100" h="45" textSize="14sp" />
+                </linear>
+            </linear>
+        </frame>
+    );
+    
+    // 等待窗口完全加载后再设置位置（确保能获取正确的窗口大小）
+    sleep(100);
+    
+    // 获取屏幕和窗口信息
+    var screenWidth = device.width;
+    var screenHeight = device.height;
+    var windowWidth = window.getWidth();
+    var windowHeight = window.getHeight();
+    
+    // 计算居中位置
+    var centerX = (screenWidth - windowWidth) / 2;
+    var centerY = (screenHeight - windowHeight) / 2;
+    
+    log("屏幕尺寸: " + screenWidth + "x" + screenHeight);
+    log("窗口尺寸: " + windowWidth + "x" + windowHeight);
+    log("窗口位置: " + centerX + ", " + centerY);
+    
+    window.setPosition(centerX, centerY);
+    
+    // 更新显示函数
+    function updateDisplay() {
+        ui.run(function() {
+            window.h_display.setText(pad2(h));
+            window.m_display.setText(pad2(m));
+            window.s_display.setText(pad2(s));
+            window.d_display.setText(pad1(d));
+        });
     }
-    return list;
+    
+    // 初始显示
+    updateDisplay();
+    
+    // 长按状态记录
+    var longPressStates = {
+        h_up: { pressing: false, interval: null },
+        h_down: { pressing: false, interval: null },
+        m_up: { pressing: false, interval: null },
+        m_down: { pressing: false, interval: null },
+        s_up: { pressing: false, interval: null },
+        s_down: { pressing: false, interval: null },
+        d_up: { pressing: false, interval: null },
+        d_down: { pressing: false, interval: null }
+    };
+    
+    // 创建简单的按钮长按处理函数
+    function makeButtonHandler(buttonId, decreaseCallback, increaseCallback) {
+        return function(view, event) {
+            var action = event.getAction();
+            var state = longPressStates[buttonId];
+            
+            if (action == event.ACTION_DOWN) {
+                state.pressing = true;
+                // 立即执行一次
+                if (buttonId.indexOf("up") >= 0) {
+                    decreaseCallback();
+                } else {
+                    increaseCallback();
+                }
+                updateDisplay();
+                
+                // 500ms后开始重复
+                state.interval = setInterval(function() {
+                    if (state.pressing) {
+                        if (buttonId.indexOf("up") >= 0) {
+                            decreaseCallback();
+                        } else {
+                            increaseCallback();
+                        }
+                        updateDisplay();
+                    }
+                }, 100);
+                
+                return true;
+            } else if (action == event.ACTION_UP || action == event.ACTION_CANCEL) {
+                state.pressing = false;
+                if (state.interval !== null) {
+                    clearInterval(state.interval);
+                    state.interval = null;
+                }
+                return true;
+            }
+            
+            return false;
+        };
+    }
+    
+    // 绑定小时按钮事件（上箭头减少，下箭头增加）
+    try {
+        window.h_up.setOnTouchListener(makeButtonHandler("h_up",
+            function() { h = (h - 1 + 24) % 24; },
+            function() { h = (h + 1) % 24; }
+        ));
+        window.h_down.setOnTouchListener(makeButtonHandler("h_down",
+            function() { h = (h - 1 + 24) % 24; },
+            function() { h = (h + 1) % 24; }
+        ));
+    } catch(e) {
+        log("小时按钮绑定失败: " + e);
+    }
+    
+    // 绑定分钟按钮事件
+    try {
+        window.m_up.setOnTouchListener(makeButtonHandler("m_up",
+            function() { m = (m - 1 + 60) % 60; },
+            function() { m = (m + 1) % 60; }
+        ));
+        window.m_down.setOnTouchListener(makeButtonHandler("m_down",
+            function() { m = (m - 1 + 60) % 60; },
+            function() { m = (m + 1) % 60; }
+        ));
+    } catch(e) {
+        log("分钟按钮绑定失败: " + e);
+    }
+    
+    // 绑定秒按钮事件
+    try {
+        window.s_up.setOnTouchListener(makeButtonHandler("s_up",
+            function() { s = (s - 1 + 60) % 60; },
+            function() { s = (s + 1) % 60; }
+        ));
+        window.s_down.setOnTouchListener(makeButtonHandler("s_down",
+            function() { s = (s - 1 + 60) % 60; },
+            function() { s = (s + 1) % 60; }
+        ));
+    } catch(e) {
+        log("秒按钮绑定失败: " + e);
+    }
+    
+    // 绑定0.1秒按钮事件
+    try {
+        window.d_up.setOnTouchListener(makeButtonHandler("d_up",
+            function() { d = (d - 1 + 10) % 10; },
+            function() { d = (d + 1) % 10; }
+        ));
+        window.d_down.setOnTouchListener(makeButtonHandler("d_down",
+            function() { d = (d - 1 + 10) % 10; },
+            function() { d = (d + 1) % 10; }
+        ));
+    } catch(e) {
+        log("0.1秒按钮绑定失败: " + e);
+    }
+    
+    // 确定按钮
+    try {
+        window.confirm_btn.click(function() {
+            result = { h: h, m: m, s: s, d: d };
+            finished = true;
+        });
+    } catch(e) {
+        log("确定按钮绑定失败: " + e);
+    }
+    
+    // 取消按钮
+    try {
+        window.cancel_btn.click(function() {
+            result = null;
+            finished = true;
+        });
+    } catch(e) {
+        log("取消按钮绑定失败: " + e);
+    }
+    
+    // 等待用户交互
+    while (!finished) {
+        sleep(100);
+    }
+    
+    // 关闭窗口
+    window.close();
+    return result;
+}
+
+/**
+ * 格式化单个数字（不补零）
+ */
+function pad1(n) {
+    return "" + n;
 }
 
 /**
