@@ -712,34 +712,36 @@ function setupMode() {
             }
             masterTime = timeResult.formatted;
             log("主任务触发时间: " + masterTime);
+            
+            // 主任务的时间偏移固定为0
+            var offsetSec = 0;
+            log("时间偏移: 0s (主任务固定为0)");
         } else {
             // 后续任务：只设置偏移
-            dialogs.alert("任务 " + taskIndex, "准备设置第 " + taskIndex + " 个任务\n只需要设置时间偏移");
+            dialogs.alert("任务 " + taskIndex, "准备设置第 " + taskIndex + " 个任务\n基准时间: " + masterTime + "\n请设置时间偏移");
             
             // 设置时间偏移（秒）
             log("任务" + taskIndex + " - 步骤 1: 设置时间偏移(秒)");
-        }
-        
-        // 2. 设置时间偏移（对所有任务）
-        var offsetStr = dialogs.rawInput("设置时间偏移(秒，如5.5或-3.2)", "0");
-        if (offsetStr === null) {
-            toast("任务设置已取消");
-            if (taskList.length === 0) {
-                return false;
-            } else {
-                break;
+            var offsetStr = dialogs.rawInput("设置时间偏移(秒，如5.5或-3.2)\n基准时间: " + masterTime, "0");
+            if (offsetStr === null) {
+                toast("任务设置已取消");
+                if (taskList.length === 0) {
+                    return false;
+                } else {
+                    break;
+                }
             }
+            var offsetSec = parseFloat(offsetStr) || 0;
+            // 限制精度到 0.1s
+            offsetSec = Math.round(offsetSec * 10) / 10;
+            log("时间偏移: " + offsetSec + "s");
         }
-        var offsetSec = parseFloat(offsetStr) || 0;
-        // 限制精度到 0.1s
-        offsetSec = Math.round(offsetSec * 10) / 10;
-        log("时间偏移: " + offsetSec + "s");
         
         // 3. 设置连点坐标
         log("任务" + taskIndex + " - 步骤 2: 设置连点坐标");
         var clickX = CONFIG.clickX;
         var clickY = CONFIG.clickY;
-        var choice = dialogs.confirm("设置连点坐标", "是否为此任务设置新的连点坐标？");
+        var choice = dialogs.confirm("设置连点坐标", "为此任务设置连点坐标？");
         if (choice) {
             var coords = getTouchCoordinates(-1, true);
             if (coords.length > 0) {
@@ -838,7 +840,46 @@ function runMode() {
 
     // 5. 启动任务调度
     currentTaskIndex = 0;
-    scheduleNextTask();
+    
+    // 先计算所有任务的实际触发时间戳，然后按时间排序
+    var taskTimestamps = [];
+    for (var i = 0; i < taskList.length; i++) {
+        var task = taskList[i];
+        var result = parseTimeString(task.targetTime);
+        if (result.valid) {
+            var targetDate = new Date();
+            targetDate.setHours(result.h);
+            targetDate.setMinutes(result.m);
+            targetDate.setSeconds(result.s);
+            targetDate.setMilliseconds(result.d * 100);
+            
+            var baseTimestamp = targetDate.getTime();
+            var offsetMs = Math.round(task.offsetSec * 1000);
+            var actualTimestamp = baseTimestamp + offsetMs;
+            
+            taskTimestamps.push({
+                index: i,
+                timestamp: actualTimestamp,
+                task: task
+            });
+        }
+    }
+    
+    // 按触发时间升序排序
+    taskTimestamps.sort(function(a, b) {
+        return a.timestamp - b.timestamp;
+    });
+    
+    // 记录排序后的任务执行顺序
+    log("任务执行顺序（按触发时间）:");
+    for (var i = 0; i < taskTimestamps.length; i++) {
+        var item = taskTimestamps[i];
+        var timeStr = formatTime(item.timestamp);
+        log("  任务 " + (item.index + 1) + ": " + timeStr);
+    }
+    
+    // 按排序后的顺序执行任务
+    scheduleNextTaskByTimestamp(taskTimestamps, 0);
 }
 
 /**
@@ -1139,6 +1180,12 @@ function showAlarmClockPickerFloaty(initialH, initialM, initialS, initialD) {
             <linear orientation="vertical" gravity="center_horizontal" spacing="10">
                 <text text="设置目标时间" textColor="#000000" textSize="18sp" gravity="center" />
                 
+                <!-- 显示当前本机时间 -->
+                <linear orientation="horizontal" gravity="center_horizontal" spacing="5" bg="#e3f2fd" padding="8">
+                    <text text="本机时间:" textColor="#1976d2" textSize="13sp" />
+                    <text id="current_time_display" text="00:00:00:0" textColor="#1976d2" textSize="13sp" />
+                </linear>
+                
                 <linear orientation="horizontal" gravity="center_horizontal" spacing="5">
                     <!-- HH -->
                     <linear orientation="vertical" gravity="center_horizontal">
@@ -1209,11 +1256,39 @@ function showAlarmClockPickerFloaty(initialH, initialM, initialS, initialD) {
             window.m_display.setText(pad2(m));
             window.s_display.setText(pad2(s));
             window.d_display.setText(pad1(d));
+            
+            // 更新当前本机时间
+            var now = new Date();
+            var currentH = pad2(now.getHours());
+            var currentM = pad2(now.getMinutes());
+            var currentS = pad2(now.getSeconds());
+            var currentD = Math.floor(now.getMilliseconds() / 100);
+            window.current_time_display.setText(currentH + ":" + currentM + ":" + currentS + ":" + currentD);
         });
     }
     
     // 初始显示
     updateDisplay();
+    
+    // 创建独立线程持续更新本机时间显示
+    var timeUpdateThread = threads.start(function() {
+        while (!finished) {
+            sleep(100);
+            if (finished || !window) break;
+            
+            var now = new Date();
+            var currentH = pad2(now.getHours());
+            var currentM = pad2(now.getMinutes());
+            var currentS = pad2(now.getSeconds());
+            var currentD = Math.floor(now.getMilliseconds() / 100);
+            
+            ui.run(function() {
+                if (window && window.current_time_display) {
+                    window.current_time_display.setText(currentH + ":" + currentM + ":" + currentS + ":" + currentD);
+                }
+            });
+        }
+    });
     
     // 长按状态记录
     var longPressStates = {
@@ -1348,6 +1423,11 @@ function showAlarmClockPickerFloaty(initialH, initialM, initialS, initialD) {
     // 等待用户交互
     while (!finished) {
         sleep(100);
+    }
+    
+    // 停止时间更新线程
+    if (timeUpdateThread) {
+        timeUpdateThread.interrupt();
     }
     
     // 关闭窗口
