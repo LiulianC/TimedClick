@@ -411,6 +411,9 @@ function getTouchCoordinates(maxClicks, showUI) {
             var controlX = 0, controlY = 0;
             var windowX, windowY;
             
+            var doubleClickCount = 0;
+            var doubleClickResetTimer = null;
+            
             controlWindow.control.setOnTouchListener(function(view, event) {
                 var action = event.getAction();
                 
@@ -420,12 +423,23 @@ function getTouchCoordinates(maxClicks, showUI) {
                     windowX = controlWindow.getX();
                     windowY = controlWindow.getY();
                     
-                    var currentTime = new Date().getTime();
-                    if (currentTime - lastControlClickTime < 300) {
-                        // 双击了停止
+                    doubleClickCount++;
+                    
+                    // 清除之前的重置计时器
+                    if (doubleClickResetTimer) {
+                        clearTimeout(doubleClickResetTimer);
+                    }
+                    
+                    // 300ms 后重置计数
+                    doubleClickResetTimer = setTimeout(function() {
+                        doubleClickCount = 0;
+                    }, 300);
+                    
+                    // 双击（连续两次点击）则停止
+                    if (doubleClickCount >= 2) {
                         isListening = false;
                     }
-                    lastControlClickTime = currentTime;
+                    
                     return true;
                 }
                 
@@ -466,7 +480,11 @@ function getTouchCoordinates(maxClicks, showUI) {
         });
         
         if (showUI) {
-            log("点击坐标采集已启动，双击停止窗口或点击 " + maxClicks + " 次后结束");
+            if (maxClicks > 0) {
+                log("点击坐标采集已启动，点击 " + maxClicks + " 次后自动结束");
+            } else {
+                log("点击坐标采集已启动，请点击要采集的位置，然后双击停止窗口结束采集");
+            }
         }
         
         // 等待点击结束
@@ -642,40 +660,187 @@ function viewSavedSettings() {
         var storage = storages.create("autoshop_settings");
         var settingsStr = storage.get("settings");
         
-        if (settingsStr) {
-            var settings = JSON.parse(settingsStr);
-            if (settings.tasks && settings.tasks.length > 0) {
-                var message = "=== 保存的任务列表 ===\n共 " + settings.tasks.length + " 个任务\n\n";
-                for (var i = 0; i < settings.tasks.length; i++) {
-                    var task = settings.tasks[i];
-                    message += "【任务 " + (i + 1) + "】";
-                    if (i === 0) {
-                        message += "(主任务)";
-                    }
-                    message += "\n";
-                    if (task.targetTime) {
-                        message += "  触发时间: " + task.targetTime + "\n";
-                    }
-                    message += "  时间偏移: " + task.offsetSec.toFixed(1) + "s\n";
-                    message += "  点击坐标: (" + task.clickX + ", " + task.clickY + ")\n";
-                    message += "  点击间隔: " + task.interval + "ms\n";
-                    message += "  持续时间: " + task.pressDuration + "ms\n";
-                    message += "  总时长: " + task.totalDuration + "ms\n";
-                    message += "  频率: " + calculateClicksPerSecond(task.interval, task.pressDuration) + "次/秒\n\n";
-                }
-                dialogs.alert("任务列表", message);
-                return true;
-            } else {
-                dialogs.alert("提示", "还没有保存过任务，请先创建任务。");
-                return false;
-            }
-        } else {
+        if (!settingsStr) {
             dialogs.alert("提示", "还没有保存过任务，请先创建任务。");
             return false;
         }
+        
+        var settings = JSON.parse(settingsStr);
+        if (!settings.tasks || settings.tasks.length === 0) {
+            dialogs.alert("提示", "还没有保存过任务，请先创建任务。");
+            return false;
+        }
+        
+        // 交互式任务菜单
+        while (true) {
+            var taskOptions = [];
+            for (var i = 0; i < settings.tasks.length; i++) {
+                var taskLabel = "任务 " + (i + 1);
+                if (i === 0) taskLabel += " (主)";
+                taskLabel += " - ";
+                if (settings.tasks[i].targetTime) {
+                    taskLabel += settings.tasks[i].targetTime;
+                } else {
+                    taskLabel += "偏移 " + settings.tasks[i].offsetSec.toFixed(1) + "s";
+                }
+                taskOptions.push(taskLabel);
+            }
+            taskOptions.push("返回主菜单");
+            
+            var choice = dialogs.select("选择要编辑的任务", taskOptions);
+            
+            if (choice === -1 || choice === taskOptions.length - 1) {
+                // 返回主菜单
+                break;
+            }
+            
+            // 编辑选中的任务
+            editSavedTask(choice);
+            
+            // 刷新设置对象
+            settingsStr = storage.get("settings");
+            settings = JSON.parse(settingsStr);
+        }
+        
+        return true;
     } catch (e) {
         dialogs.alert("错误", "读取任务失败: " + e);
         return false;
+    }
+}
+
+/**
+ * 编辑已保存的任务
+ */
+function editSavedTask(taskIndex) {
+    var storage = storages.create("autoshop_settings");
+    var settingsStr = storage.get("settings");
+    var settings = JSON.parse(settingsStr);
+    var task = settings.tasks[taskIndex];
+    
+    while (true) {
+        // 显示当前任务信息
+        var taskInfo = "任务 " + (taskIndex + 1);
+        if (taskIndex === 0) taskInfo += " (主任务)";
+        taskInfo += "\n\n";
+        if (task.targetTime) {
+            taskInfo += "触发时间: " + task.targetTime + "\n";
+        } else {
+            taskInfo += "时间偏移: " + task.offsetSec.toFixed(1) + "s\n";
+        }
+        taskInfo += "点击坐标: (" + task.clickX + ", " + task.clickY + ")\n";
+        taskInfo += "点击间隔: " + task.interval + "ms\n";
+        taskInfo += "持续时间: " + task.pressDuration + "ms\n";
+        taskInfo += "总时长: " + task.totalDuration + "ms";
+        
+        var editOptions = [];
+        if (taskIndex === 0) {
+            editOptions.push("编辑触发时间");
+        } else {
+            editOptions.push("编辑时间偏移");
+        }
+        editOptions.push("编辑点击坐标");
+        editOptions.push("编辑点击参数");
+        if (taskIndex > 0 && settings.tasks.length > 1) {
+            editOptions.push("删除此任务");
+        }
+        editOptions.push("返回任务列表");
+        
+        var choice = dialogs.select(taskInfo, editOptions);
+        
+        if (choice === -1 || choice === editOptions.length - 1) {
+            // 返回任务列表
+            break;
+        }
+        
+        if (taskIndex === 0) {
+            // 主任务
+            if (choice === 0) {
+                // 编辑触发时间
+                var timeResult = showAlarmClockPickerFloaty(
+                    parseInt(task.targetTime.substring(0, 2)),
+                    parseInt(task.targetTime.substring(3, 5)),
+                    parseInt(task.targetTime.substring(6, 8)),
+                    parseInt(task.targetTime.substring(9, 10))
+                );
+                if (timeResult) {
+                    task.targetTime = pad2(timeResult.h) + ":" + pad2(timeResult.m) + ":" + pad2(timeResult.s) + ":" + pad1(timeResult.d);
+                    saveSettings();
+                    dialogs.alert("成功", "触发时间已更新为: " + task.targetTime);
+                }
+            } else if (choice === 1) {
+                // 编辑点击坐标
+                var coordResult = getTouchCoordinates(-1, true);
+                if (coordResult && coordResult.length > 0) {
+                    task.clickX = coordResult[coordResult.length - 1].x;
+                    task.clickY = coordResult[coordResult.length - 1].y;
+                    saveSettings();
+                    dialogs.alert("成功", "点击坐标已更新为: (" + task.clickX + ", " + task.clickY + ")");
+                }
+            } else if (choice === 2) {
+                // 编辑点击参数
+                var paramResult = showClickFrequencyPickerFloaty(
+                    task.interval,
+                    task.pressDuration,
+                    task.totalDuration
+                );
+                if (paramResult) {
+                    task.interval = paramResult.interval;
+                    task.pressDuration = paramResult.pressDuration;
+                    task.totalDuration = paramResult.totalDuration;
+                    saveSettings();
+                    dialogs.alert("成功", "点击参数已更新");
+                }
+            }
+        } else {
+            // 从属任务
+            if (choice === 0) {
+                // 编辑时间偏移
+                var offsetStr = dialogs.rawInput("输入时间偏移(单位:秒)\n\n当前值: " + task.offsetSec.toFixed(1), "0.0");
+                if (offsetStr !== null) {
+                    var offset = parseFloat(offsetStr);
+                    if (!isNaN(offset)) {
+                        task.offsetSec = offset;
+                        saveSettings();
+                        dialogs.alert("成功", "时间偏移已更新为: " + offset.toFixed(1) + "s");
+                    } else {
+                        dialogs.alert("错误", "请输入有效的数字");
+                    }
+                }
+            } else if (choice === 1) {
+                // 编辑点击坐标
+                var coordResult = getTouchCoordinates(-1, true);
+                if (coordResult && coordResult.length > 0) {
+                    task.clickX = coordResult[coordResult.length - 1].x;
+                    task.clickY = coordResult[coordResult.length - 1].y;
+                    saveSettings();
+                    dialogs.alert("成功", "点击坐标已更新为: (" + task.clickX + ", " + task.clickY + ")");
+                }
+            } else if (choice === 2) {
+                // 编辑点击参数
+                var paramResult = showClickFrequencyPickerFloaty(
+                    task.interval,
+                    task.pressDuration,
+                    task.totalDuration
+                );
+                if (paramResult) {
+                    task.interval = paramResult.interval;
+                    task.pressDuration = paramResult.pressDuration;
+                    task.totalDuration = paramResult.totalDuration;
+                    saveSettings();
+                    dialogs.alert("成功", "点击参数已更新");
+                }
+            } else if (choice === 3) {
+                // 删除此任务
+                var confirmDelete = dialogs.confirm("确认删除?", "是否删除任务 " + (taskIndex + 1) + "?");
+                if (confirmDelete) {
+                    settings.tasks.splice(taskIndex, 1);
+                    storage.put("settings", JSON.stringify(settings));
+                    dialogs.alert("成功", "任务已删除");
+                    break;
+                }
+            }
+        }
     }
 }
 
