@@ -602,18 +602,51 @@ function loadSettings() {
 }
 
 /**
- * 显示主菜单，让用户选择"设置"或"运行"
+ * 显示主菜单，让用户选择"设置"、"运行"、"查看设置"或"退出"
  */
 function showMainMenu() {
-    var options = ["⚙️ 设置", "▶️ 运行"];
+    var options = ["⚙️ 设置", "▶️ 运行", "👁️ 查看上次保存的设置", "✕ 退出"];
     var choice = dialogs.select("京东定时抢购脚本", options);
     
     if (choice === 0) {
         return "setup";
     } else if (choice === 1) {
         return "run";
+    } else if (choice === 2) {
+        return "view";
     } else {
-        return null;
+        return "exit";
+    }
+}
+
+/**
+ * 显示上次保存的设置信息
+ */
+function viewSavedSettings() {
+    try {
+        var storage = storages.create("autoshop_settings");
+        var settingsStr = storage.get("settings");
+        
+        if (settingsStr) {
+            var settings = JSON.parse(settingsStr);
+            var message = "=== 上次保存的设置 ===\n\n";
+            message += "目标触发时间: " + settings.targetTime + "\n\n";
+            message += "点击坐标: (" + settings.clickX + ", " + settings.clickY + ")\n\n";
+            message += "点击参数:\n";
+            message += "  • 间隔: " + settings.interval + "ms\n";
+            message += "  • 持续时间: " + settings.pressDuration + "ms\n";
+            message += "  • 总时长: " + settings.totalDuration + "ms\n";
+            message += "  • 点击频率: " + calculateClicksPerSecond(settings.interval, settings.pressDuration) + "次/秒";
+            
+            dialogs.alert("保存的设置", message);
+            return true;
+        } else {
+            dialogs.alert("提示", "还没有保存过设置，请先进行设置。");
+            return false;
+        }
+    } catch (e) {
+        dialogs.alert("错误", "读取设置失败: " + e);
+        return false;
     }
 }
 
@@ -662,11 +695,6 @@ function runMode() {
     // 0. 加载上次的设置
     loadSettings();
     
-    // 1. 显示启动确认窗口
-    if (!showStartConfirmationFloaty()) {
-        toast("脚本已退出");
-        return false;
-    }
     
     // 2. 初始化：同步服务器时间
     toast("正在同步京东服务器时间...");
@@ -724,6 +752,7 @@ function runMode() {
 
         // 检查是否到达时间
         if (now >= targetTimestamp) {
+            toast("已到达执行时间");
             ui.run(function() {
                 if(window) window.text.setText("执行中...");
                 if(window) window.text.setTextColor(colors.RED);
@@ -761,9 +790,14 @@ function main() {
         } else if (mode === "run") {
             // 进入运行模式
             runMode();
-        } else 
+            break;
+        } else if (mode === "view") {
+            // 查看上次保存的设置
+            viewSavedSettings();
+        } else { 
             toast("脚本已退出");
             break;
+        }
     }
 }
 
