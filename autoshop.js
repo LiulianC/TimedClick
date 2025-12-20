@@ -544,37 +544,52 @@ var window = null; // 时间悬浮窗
 var overlayWindow = null; // 点击区域显示窗口
 var isRunning = true;
 
-// 储存配置的键名
-var STORAGE_KEY_TARGET_TIME = "jd_target_time";
-var STORAGE_KEY_CLICK_X = "jd_click_x";
-var STORAGE_KEY_CLICK_Y = "jd_click_y";
-var STORAGE_KEY_INTERVAL = "jd_interval";
-var STORAGE_KEY_PRESS_DURATION = "jd_press_duration";
-var STORAGE_KEY_TOTAL_DURATION = "jd_total_duration";
+// 多任务相关
+var taskList = []; // 任务列表数组
+var currentTaskIndex = 0; // 当前任务索引
+var currentTask = null; // 当前正在执行的任务
 
 // ==============================
 // 2. 设置管理 - 保存和加载配置
 // ==============================
 
 /**
- * 保存用户设置到存储
+ * 创建单个任务对象
+ * @param {string} targetTime 目标触发时间 HH:MM:SS:d（只有主任务需要设置，其他任务设为null）
+ * @param {number} offsetSec 时间偏移（秒，可以是负数，如5.5、-3.2，默认0）
+ * @param {number} clickX 点击X坐标
+ * @param {number} clickY 点击Y坐标
+ * @param {number} interval 点击间隔
+ * @param {number} pressDuration 点击持续时间
+ * @param {number} totalDuration 总点击时长
+ * @return {object} 任务对象
  */
-function saveSettings() {
-    var settings = {
-        targetTime: CONFIG.defaultTargetTime,
-        clickX: CONFIG.clickX,
-        clickY: CONFIG.clickY,
-        interval: CONFIG.interval,
-        pressDuration: CONFIG.pressDuration,
-        totalDuration: CONFIG.totalDuration
+function createTask(targetTime, offsetSec, clickX, clickY, interval, pressDuration, totalDuration) {
+    return {
+        targetTime: targetTime || null,  // 只有主任务（taskIndex=0）需要设置
+        offsetSec: offsetSec || 0,       // 秒为单位，内部计算时乘以1000转为毫秒
+        clickX: clickX,
+        clickY: clickY,
+        interval: interval,
+        pressDuration: pressDuration,
+        totalDuration: totalDuration
     };
-    
-    storages.create("autoshop_settings").put("settings", JSON.stringify(settings));
-    log("设置已保存");
 }
 
 /**
- * 加载用户设置
+ * 保存任务列表到存储
+ */
+function saveSettings() {
+    var settings = {
+        tasks: taskList
+    };
+    
+    storages.create("autoshop_settings").put("settings", JSON.stringify(settings));
+    log("任务列表已保存，共 " + taskList.length + " 个任务");
+}
+
+/**
+ * 加载任务列表
  */
 function loadSettings() {
     try {
@@ -583,16 +598,16 @@ function loadSettings() {
         
         if (settingsStr) {
             var settings = JSON.parse(settingsStr);
-            CONFIG.defaultTargetTime = settings.targetTime || CONFIG.defaultTargetTime;
-            CONFIG.clickX = settings.clickX || CONFIG.clickX;
-            CONFIG.clickY = settings.clickY || CONFIG.clickY;
-            CONFIG.interval = settings.interval || CONFIG.interval;
-            CONFIG.pressDuration = settings.pressDuration || CONFIG.pressDuration;
-            CONFIG.totalDuration = settings.totalDuration || CONFIG.totalDuration;
-            log("已加载上次保存的设置");
-            return true;
+            if (settings.tasks && settings.tasks.length > 0) {
+                taskList = settings.tasks;
+                log("已加载上次保存的任务列表，共 " + taskList.length + " 个任务");
+                return true;
+            } else {
+                log("任务列表为空，使用默认配置");
+                return false;
+            }
         } else {
-            log("未找到保存的设置，使用默认配置");
+            log("未找到保存的任务，使用默认配置");
             return false;
         }
     } catch (e) {
@@ -620,7 +635,7 @@ function showMainMenu() {
 }
 
 /**
- * 显示上次保存的设置信息
+ * 显示上次保存的任务列表
  */
 function viewSavedSettings() {
     try {
@@ -629,72 +644,183 @@ function viewSavedSettings() {
         
         if (settingsStr) {
             var settings = JSON.parse(settingsStr);
-            var message = "=== 上次保存的设置 ===\n\n";
-            message += "目标触发时间: " + settings.targetTime + "\n\n";
-            message += "点击坐标: (" + settings.clickX + ", " + settings.clickY + ")\n\n";
-            message += "点击参数:\n";
-            message += "  • 间隔: " + settings.interval + "ms\n";
-            message += "  • 持续时间: " + settings.pressDuration + "ms\n";
-            message += "  • 总时长: " + settings.totalDuration + "ms\n";
-            message += "  • 点击频率: " + calculateClicksPerSecond(settings.interval, settings.pressDuration) + "次/秒";
-            
-            dialogs.alert("保存的设置", message);
-            return true;
+            if (settings.tasks && settings.tasks.length > 0) {
+                var message = "=== 保存的任务列表 ===\n共 " + settings.tasks.length + " 个任务\n\n";
+                for (var i = 0; i < settings.tasks.length; i++) {
+                    var task = settings.tasks[i];
+                    message += "【任务 " + (i + 1) + "】";
+                    if (i === 0) {
+                        message += "(主任务)";
+                    }
+                    message += "\n";
+                    if (task.targetTime) {
+                        message += "  触发时间: " + task.targetTime + "\n";
+                    }
+                    message += "  时间偏移: " + task.offsetSec.toFixed(1) + "s\n";
+                    message += "  点击坐标: (" + task.clickX + ", " + task.clickY + ")\n";
+                    message += "  点击间隔: " + task.interval + "ms\n";
+                    message += "  持续时间: " + task.pressDuration + "ms\n";
+                    message += "  总时长: " + task.totalDuration + "ms\n";
+                    message += "  频率: " + calculateClicksPerSecond(task.interval, task.pressDuration) + "次/秒\n\n";
+                }
+                dialogs.alert("任务列表", message);
+                return true;
+            } else {
+                dialogs.alert("提示", "还没有保存过任务，请先创建任务。");
+                return false;
+            }
         } else {
-            dialogs.alert("提示", "还没有保存过设置，请先进行设置。");
+            dialogs.alert("提示", "还没有保存过任务，请先创建任务。");
             return false;
         }
     } catch (e) {
-        dialogs.alert("错误", "读取设置失败: " + e);
+        dialogs.alert("错误", "读取任务失败: " + e);
         return false;
     }
 }
 
 /**
- * 设置流程 - 用户设置各项参数并保存
+ * 设置流程 - 用户设置任务并保存
  */
 function setupMode() {
     log("进入设置模式");
     toast("进入设置模式");
     
-    // 1. 设置目标时间
-    log("步骤 1: 设置目标时间");
-    if (!setUserTargetTime()) {
-        toast("设置已取消");
+    taskList = []; // 清空任务列表
+    var taskIndex = 0;
+    var masterTime = null; // 主任务的触发时间
+    
+    while (true) {
+        taskIndex++;
+        log("步骤: 设置任务 " + taskIndex);
+        
+        if (taskIndex === 1) {
+            // 主任务：设置触发时间
+            dialogs.alert("主任务设置", "第 " + taskIndex + " 个任务是主任务\n只需要设置触发时间\n其他任务将基于此时间设置偏移");
+            
+            // 1. 设置目标时间
+            log("任务" + taskIndex + " - 设置主任务触发时间");
+            var timeInput = pickTimeWithScroll(CONFIG.defaultTargetTime);
+            if (!timeInput) {
+                toast("任务设置已取消");
+                return false;
+            }
+            var timeResult = parseTimeString(timeInput);
+            if (!timeResult.valid) {
+                toast("时间格式错误，请重新设置");
+                continue;
+            }
+            masterTime = timeResult.formatted;
+            log("主任务触发时间: " + masterTime);
+        } else {
+            // 后续任务：只设置偏移
+            dialogs.alert("任务 " + taskIndex, "准备设置第 " + taskIndex + " 个任务\n只需要设置时间偏移");
+            
+            // 设置时间偏移（秒）
+            log("任务" + taskIndex + " - 步骤 1: 设置时间偏移(秒)");
+        }
+        
+        // 2. 设置时间偏移（对所有任务）
+        var offsetStr = dialogs.rawInput("设置时间偏移(秒，如5.5或-3.2)", "0");
+        if (offsetStr === null) {
+            toast("任务设置已取消");
+            if (taskList.length === 0) {
+                return false;
+            } else {
+                break;
+            }
+        }
+        var offsetSec = parseFloat(offsetStr) || 0;
+        // 限制精度到 0.1s
+        offsetSec = Math.round(offsetSec * 10) / 10;
+        log("时间偏移: " + offsetSec + "s");
+        
+        // 3. 设置连点坐标
+        log("任务" + taskIndex + " - 步骤 2: 设置连点坐标");
+        var clickX = CONFIG.clickX;
+        var clickY = CONFIG.clickY;
+        var choice = dialogs.confirm("设置连点坐标", "是否为此任务设置新的连点坐标？");
+        if (choice) {
+            var coords = getTouchCoordinates(-1, true);
+            if (coords.length > 0) {
+                clickX = coords[coords.length - 1].x;
+                clickY = coords[coords.length - 1].y;
+                log("连点坐标已设置: (" + clickX + ", " + clickY + ")");
+            }
+        }
+        
+        // 4. 设置点击参数
+        log("任务" + taskIndex + " - 步骤 3: 设置点击参数");
+        var interval = CONFIG.interval;
+        var pressDuration = CONFIG.pressDuration;
+        var totalDuration = CONFIG.totalDuration;
+        choice = dialogs.confirm("设置点击参数", "是否为此任务设置新的点击参数？");
+        if (choice) {
+            var paramResult = showClickFrequencyPickerFloaty(interval, pressDuration, totalDuration);
+            if (paramResult) {
+                interval = paramResult.interval;
+                pressDuration = paramResult.pressDuration;
+                totalDuration = paramResult.totalDuration;
+                log("点击参数已设置");
+            }
+        }
+        
+        // 5. 创建任务并添加到列表
+        var task = createTask(masterTime, offsetSec, clickX, clickY, interval, pressDuration, totalDuration);
+        taskList.push(task);
+        log("任务 " + taskIndex + " 已创建");
+        
+        var timeStr = "";
+        if (taskIndex === 1) {
+            timeStr = "时间: " + masterTime + "\n";
+        }
+        dialogs.alert("任务创建完成", "任务 " + taskIndex + (taskIndex === 1 ? "(主任务)" : "") + " 的设置:\n" +
+            timeStr +
+            "偏移: " + offsetSec.toFixed(1) + "s\n" +
+            "坐标: (" + clickX + ", " + clickY + ")\n" +
+            "参数: " + interval + "ms / " + pressDuration + "ms / " + totalDuration + "ms");
+        
+        // 6. 询问是否继续添加任务
+        choice = dialogs.confirm("继续添加", "是否继续添加下一个任务？");
+        if (!choice) {
+            break;
+        }
+    }
+    
+    if (taskList.length > 0) {
+        log("任务列表完成，共 " + taskList.length + " 个任务");
+        saveSettings();
+        dialogs.alert("设置完成", "已创建 " + taskList.length + " 个任务并保存。");
+        return true;
+    } else {
+        toast("没有创建任何任务");
         return false;
     }
-    
-    // 2. 设置连点坐标
-    log("步骤 2: 设置连点坐标");
-    var choice = dialogs.confirm("设置连点坐标", "是否现在设置连点坐标？");
-    if (choice) {
-        setClickCoordinatesByTouching();
-    }
-    
-    // 3. 设置点击参数
-    log("步骤 3: 设置点击参数");
-    choice = dialogs.confirm("设置点击参数", "是否现在设置点击参数？");
-    if (choice) {
-        setClickFrequency();
-    }
-    
-    // 4. 保存设置
-    log("步骤 4: 保存设置");
-    saveSettings();
-    dialogs.alert("设置完成", "所有设置已保存。下次运行时将自动加载这些设置。");
-    
-    return true;
 }
 
 /**
- * 运行流程 - 使用已保存的设置执行任务
+ * 运行流程 - 使用已保存的任务执行
  */
 function runMode() {
     log("进入运行模式");
     
-    // 0. 加载上次的设置
-    loadSettings();
+    // 0. 加载任务列表
+    if (!loadSettings()) {
+        toast("没有保存的任务");
+        return false;
+    }
     
+    // 验证任务列表
+    if (taskList.length === 0) {
+        toast("任务列表为空");
+        return false;
+    }
+    
+    // 1. 显示启动确认窗口
+    if (!showStartConfirmationFloaty()) {
+        toast("脚本已退出");
+        return false;
+    }
     
     // 2. 初始化：同步服务器时间
     toast("正在同步京东服务器时间...");
@@ -707,26 +833,53 @@ function runMode() {
     initFloatyWindow();
     
     // 4. 显示点击区域
-    showClickArea();
+    toast("已加载 " + taskList.length + " 个任务");
+    log("任务列表准备完毕");
 
-    // 5. 解析目标时间
-    var result = parseTimeString(CONFIG.defaultTargetTime);
-    if (!result.valid) {
-        toast("目标时间格式错误");
-        return false;
+    // 5. 启动任务调度
+    currentTaskIndex = 0;
+    scheduleNextTask();
+}
+
+/**
+ * 调度下一个任务
+ */
+function scheduleNextTask() {
+    if (currentTaskIndex >= taskList.length) {
+        log("所有任务已完成");
+        handleFinish();
+        return;
     }
     
+    currentTask = taskList[currentTaskIndex];
+    log("准备执行任务 " + (currentTaskIndex + 1) + " / " + taskList.length);
+    
+    // 解析任务的目标时间
+    var result = parseTimeString(currentTask.targetTime);
+    if (!result.valid) {
+        toast("任务 " + (currentTaskIndex + 1) + " 时间格式错误");
+        currentTaskIndex++;
+        scheduleNextTask();
+        return;
+    }
+    
+    // 计算任务的触发时间戳（包含偏移）
     var targetDate = new Date();
     targetDate.setHours(result.h);
     targetDate.setMinutes(result.m);
     targetDate.setSeconds(result.s);
     targetDate.setMilliseconds(result.d * 100);
     
-    targetTimestamp = targetDate.getTime();
-    log("目标时间: " + CONFIG.defaultTargetTime);
-    log("目标时间戳: " + targetTimestamp);
+    var baseTimestamp = targetDate.getTime();
+    // 偏移单位是秒，转为毫秒
+    var offsetMs = Math.round(currentTask.offsetSec * 1000);
+    targetTimestamp = baseTimestamp + offsetMs;
+    
+    log("任务 " + (currentTaskIndex + 1) + " 目标时间: " + currentTask.targetTime + 
+        " | 偏移: " + currentTask.offsetSec.toFixed(1) + "s (" + offsetMs + "ms)");
+    log("触发时间戳: " + targetTimestamp);
 
-    // 6. 使用setTimeout监听时间
+    // 启动时间监听
     var hasResyncedAt1Minute = false;
     
     function timeCheckCallback() {
@@ -739,7 +892,7 @@ function runMode() {
         
         // 在触发时间开始前1分钟时，再精确同步一次
         if (timeUntilTarget <= 60000 && timeUntilTarget > 55000 && !hasResyncedAt1Minute) {
-            log("距离目标时间1分钟以内，准备精确同步时间...");
+            log("距离任务 " + (currentTaskIndex + 1) + " 还有1分钟，准备精确同步时间...");
             var timeInfo = getServerTimeInfo();
             timeOffset = timeInfo.offset;
             log("已重新同步时间偏差(ms): " + timeOffset);
@@ -752,14 +905,21 @@ function runMode() {
 
         // 检查是否到达时间
         if (now >= targetTimestamp) {
-            toast("已到达执行时间");
+            log("任务 " + (currentTaskIndex + 1) + " 触发时间已到");
+            toast("执行任务 " + (currentTaskIndex + 1));
+            
             ui.run(function() {
-                if(window) window.text.setText("执行中...");
+                if(window) window.text.setText("任务 " + (currentTaskIndex + 1) + " 执行中...");
                 if(window) window.text.setTextColor(colors.RED);
             });
             
-            executeClickTask();
-            handleFinish();
+            // 使用当前任务的参数执行点击
+            executeTaskClickWithParams(currentTask);
+            
+            // 调度下一个任务
+            currentTaskIndex++;
+            sleep(500); // 短暂延迟
+            scheduleNextTask();
             return;
         }
         
@@ -769,7 +929,45 @@ function runMode() {
     
     // 启动时间检测
     timeCheckCallback();
-    return true;
+}
+
+/**
+ * 使用特定任务参数执行点击
+ * @param {object} task 任务对象
+ */
+function executeTaskClickWithParams(task) {
+    log("执行任务点击: 坐标(" + task.clickX + ", " + task.clickY + "), 参数(" + 
+        task.interval + "ms, " + task.pressDuration + "ms, " + task.totalDuration + "ms)");
+    
+    var startTime = Date.now();
+    var clickCount = 0;
+    
+    while (Date.now() - startTime < task.totalDuration) {
+        // 计算随机坐标
+        var angle = Math.random() * 2 * Math.PI;
+        var r = Math.sqrt(Math.random()) * CONFIG.clickRadius;
+        var targetX = Math.round(task.clickX + r * Math.cos(angle));
+        var targetY = Math.round(task.clickY + r * Math.sin(angle));
+
+        // 计算随机时间
+        var duration = task.pressDuration + random(-CONFIG.randomRange, CONFIG.randomRange);
+        if (duration < 1) duration = 1;
+        
+        var interval = task.interval + random(-CONFIG.randomRange, CONFIG.randomRange);
+        if (interval < 1) interval = 1;
+
+        // 执行点击
+        try {
+            press(targetX, targetY, duration);
+            clickCount++;
+            log("点击 #" + clickCount + " 在 (" + targetX + ", " + targetY + ")，持续 " + duration + "ms");
+        } catch (e) {
+            log("点击失败: " + e);
+        }
+        
+        sleep(interval);
+    }
+    log("任务 " + (currentTaskIndex + 1) + " 点击完成，共点击 " + clickCount + " 次");
 }
 
 // ==============================
