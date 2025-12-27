@@ -9,6 +9,66 @@
  * 5. 获取用户点击坐标
  */
 
+// 获取脚本工作目录（脚本所在文件夹）
+var SCRIPT_DIR = files.cwd();
+if (!SCRIPT_DIR) {
+    SCRIPT_DIR = "/sdcard/脚本/";
+    log("警告: 无法获取脚本目录，使用默认路径: " + SCRIPT_DIR);
+}
+
+// 配置文件路径 - 保存在脚本同目录
+var CONFIG_FILE_PATH = files.join(SCRIPT_DIR, "autoshop_config.json");
+var TIME_SOURCE_FILE_PATH = files.join(SCRIPT_DIR, "autoshop_timesource.json");
+
+log("配置文件路径: " + CONFIG_FILE_PATH);
+log("时间源配置路径: " + TIME_SOURCE_FILE_PATH);
+
+/**
+ * 确保目录存在（如果不存在则创建）
+ */
+function ensureDirectory() {
+    try {
+        if (!files.isDir(SCRIPT_DIR)) {
+            files.ensureDir(SCRIPT_DIR);
+            log("已创建脚本目录: " + SCRIPT_DIR);
+        }
+    } catch (e) {
+        log("确保目录失败: " + e);
+    }
+}
+
+/**
+ * 确保配置文件存在
+ */
+function ensureConfigFileExists() {
+    try {
+        ensureDirectory();
+        if (!files.exists(CONFIG_FILE_PATH)) {
+            files.write(CONFIG_FILE_PATH, JSON.stringify({tasks: []}, null, 2));
+            log("已创建配置文件: " + CONFIG_FILE_PATH);
+        }
+    } catch (e) {
+        log("创建配置文件失败: " + e);
+        toast("创建配置文件失败: " + e);
+    }
+}
+
+/**
+ * 确保时间源配置文件存在
+ */
+function ensureTimeSourceFileExists() {
+    try {
+        ensureDirectory();
+        if (!files.exists(TIME_SOURCE_FILE_PATH)) {
+            files.write(TIME_SOURCE_FILE_PATH, JSON.stringify({timeSource: "jd"}, null, 2));
+            log("已创建时间源配置文件: " + TIME_SOURCE_FILE_PATH);
+        }
+    } catch (e) {
+        log("创建时间源配置文件失败: " + e);
+        toast("创建时间源配置文件失败: " + e);
+    }
+}
+
 /**
  * 显示启动确认悬浮窗
  * @return {boolean} 用户是否点击了开始，true为开始，false为退出
@@ -620,41 +680,62 @@ function createTask(targetTime, offsetSec, clickX, clickY, interval, pressDurati
 }
 
 /**
- * 保存任务列表到存储
+ * 保存任务列表到JSON文件
  */
 function saveSettings() {
-    var settings = {
-        tasks: taskList
-    };
-    
-    storages.create("autoshop_settings").put("settings", JSON.stringify(settings));
-    log("任务列表已保存，共 " + taskList.length + " 个任务");
+    try {
+        ensureConfigFileExists();
+        var settings = {
+            tasks: taskList,
+            lastModified: new Date().toISOString()
+        };
+        
+        // 写入JSON文件，带格式化
+        files.write(CONFIG_FILE_PATH, JSON.stringify(settings, null, 2));
+        log("任务列表已保存到文件: " + CONFIG_FILE_PATH + "，共 " + taskList.length + " 个任务");
+        toast("配置已保存 (" + taskList.length + "个任务)");
+        return true;
+    } catch (e) {
+        log("保存配置失败: " + e);
+        toast("保存配置失败: " + e);
+        return false;
+    }
 }
 
 /**
- * 加载任务列表
+ * 从JSON文件加载任务列表
  */
 function loadSettings() {
     try {
-        var storage = storages.create("autoshop_settings");
-        var settingsStr = storage.get("settings");
+        ensureConfigFileExists();
+        
+        if (!files.exists(CONFIG_FILE_PATH)) {
+            log("配置文件不存在: " + CONFIG_FILE_PATH);
+            return false;
+        }
+        
+        var settingsStr = files.read(CONFIG_FILE_PATH);
         
         if (settingsStr) {
             var settings = JSON.parse(settingsStr);
             if (settings.tasks && settings.tasks.length > 0) {
                 taskList = settings.tasks;
-                log("已加载上次保存的任务列表，共 " + taskList.length + " 个任务");
+                log("已从文件加载任务列表: " + CONFIG_FILE_PATH + "，共 " + taskList.length + " 个任务");
+                if (settings.lastModified) {
+                    log("最后修改时间: " + settings.lastModified);
+                }
                 return true;
             } else {
                 log("任务列表为空，使用默认配置");
                 return false;
             }
         } else {
-            log("未找到保存的任务，使用默认配置");
+            log("配置文件为空，使用默认配置");
             return false;
         }
     } catch (e) {
-        log("加载设置失败: " + e);
+        log("加载配置失败: " + e);
+        toast("加载配置失败: " + e);
         return false;
     }
 }
@@ -684,8 +765,14 @@ function showMainMenu() {
  */
 function viewSavedSettings() {
     try {
-        var storage = storages.create("autoshop_settings");
-        var settingsStr = storage.get("settings");
+        ensureConfigFileExists();
+        
+        if (!files.exists(CONFIG_FILE_PATH)) {
+            dialogs.alert("提示", "还没有保存过任务，请先创建任务。");
+            return false;
+        }
+        
+        var settingsStr = files.read(CONFIG_FILE_PATH);
         
         if (!settingsStr) {
             dialogs.alert("提示", "还没有保存过任务，请先创建任务。");
@@ -724,8 +811,8 @@ function viewSavedSettings() {
             // 编辑选中的任务
             editSavedTask(choice);
             
-            // 刷新设置对象
-            settingsStr = storage.get("settings");
+            // 重新读取配置文件
+            settingsStr = files.read(CONFIG_FILE_PATH);
             settings = JSON.parse(settingsStr);
         }
         
@@ -738,136 +825,163 @@ function viewSavedSettings() {
 
 /**
  * 编辑已保存的任务
+ * 修复：直接保存修改后的 settings 对象，而不是依赖 saveSettings() 中的全局 taskList
  */
 function editSavedTask(taskIndex) {
-    var storage = storages.create("autoshop_settings");
-    var settingsStr = storage.get("settings");
-    var settings = JSON.parse(settingsStr);
-    var task = settings.tasks[taskIndex];
-    
-    while (true) {
-        // 显示当前任务信息
-        var taskInfo = "任务 " + (taskIndex + 1);
-        if (taskIndex === 0) taskInfo += " (主任务)";
-        taskInfo += "\n\n";
-        if (task.targetTime) {
-            taskInfo += "触发时间: " + task.targetTime + "\n";
-        } else {
-            taskInfo += "时间偏移: " + task.offsetSec.toFixed(1) + "s\n";
-        }
-        taskInfo += "点击坐标: (" + task.clickX + ", " + task.clickY + ")\n";
-        taskInfo += "点击间隔: " + task.interval + "ms\n";
-        taskInfo += "持续时间: " + task.pressDuration + "ms\n";
-        taskInfo += "总时长: " + task.totalDuration + "ms";
+    try {
+        ensureConfigFileExists();
+        var settingsStr = files.read(CONFIG_FILE_PATH);
+        var settings = JSON.parse(settingsStr);
+        var task = settings.tasks[taskIndex];
         
-        var editOptions = [];
-        if (taskIndex === 0) {
-            editOptions.push("编辑触发时间");
-        } else {
-            editOptions.push("编辑时间偏移");
-        }
-        editOptions.push("编辑点击坐标");
-        editOptions.push("编辑点击参数");
-        if (taskIndex > 0 && settings.tasks.length > 1) {
-            editOptions.push("删除此任务");
-        }
-        editOptions.push("返回任务列表");
-        
-        var choice = dialogs.select(taskInfo, editOptions);
-        
-        if (choice === -1 || choice === editOptions.length - 1) {
-            // 返回任务列表
-            break;
-        }
-        
-        if (taskIndex === 0) {
-            // 主任务
-            if (choice === 0) {
-                // 编辑触发时间
-                var timeResult = showAlarmClockPickerFloaty(
-                    parseInt(task.targetTime.substring(0, 2)),
-                    parseInt(task.targetTime.substring(3, 5)),
-                    parseInt(task.targetTime.substring(6, 8)),
-                    parseInt(task.targetTime.substring(9, 10))
-                );
-                if (timeResult) {
-                    task.targetTime = pad2(timeResult.h) + ":" + pad2(timeResult.m) + ":" + pad2(timeResult.s) + ":" + pad1(timeResult.d);
-                    saveSettings();
-                    dialogs.alert("成功", "触发时间已更新为: " + task.targetTime);
-                }
-            } else if (choice === 1) {
-                // 编辑点击坐标
-                var coordResult = getTouchCoordinates(-1, true);
-                if (coordResult && coordResult.length > 0) {
-                    task.clickX = coordResult[coordResult.length - 1].x;
-                    task.clickY = coordResult[coordResult.length - 1].y;
-                    saveSettings();
-                    dialogs.alert("成功", "点击坐标已更新为: (" + task.clickX + ", " + task.clickY + ")");
-                }
-            } else if (choice === 2) {
-                // 编辑点击参数
-                var paramResult = showClickFrequencyPickerFloaty(
-                    task.interval,
-                    task.pressDuration,
-                    task.totalDuration
-                );
-                if (paramResult) {
-                    task.interval = paramResult.interval;
-                    task.pressDuration = paramResult.pressDuration;
-                    task.totalDuration = paramResult.totalDuration;
-                    saveSettings();
-                    dialogs.alert("成功", "点击参数已更新");
-                }
+        while (true) {
+            // 显示当前任务信息
+            var taskInfo = "任务 " + (taskIndex + 1);
+            if (taskIndex === 0) taskInfo += " (主任务)";
+            taskInfo += "\n\n";
+            if (task.targetTime) {
+                taskInfo += "触发时间: " + task.targetTime + "\n";
+            } else {
+                taskInfo += "时间偏移: " + task.offsetSec.toFixed(1) + "s\n";
             }
-        } else {
-            // 从属任务
-            if (choice === 0) {
-                // 编辑时间偏移
-                var offsetStr = dialogs.rawInput("输入时间偏移(单位:秒)\n\n当前值: " + task.offsetSec.toFixed(1), "0.0");
-                if (offsetStr !== null) {
-                    var offset = parseFloat(offsetStr);
-                    if (!isNaN(offset)) {
-                        task.offsetSec = offset;
-                        saveSettings();
-                        dialogs.alert("成功", "时间偏移已更新为: " + offset.toFixed(1) + "s");
-                    } else {
-                        dialogs.alert("错误", "请输入有效的数字");
+            taskInfo += "点击坐标: (" + task.clickX + ", " + task.clickY + ")\n";
+            taskInfo += "点击间隔: " + task.interval + "ms\n";
+            taskInfo += "持续时间: " + task.pressDuration + "ms\n";
+            taskInfo += "总时长: " + task.totalDuration + "ms";
+            
+            var editOptions = [];
+            if (taskIndex === 0) {
+                editOptions.push("编辑触发时间");
+            } else {
+                editOptions.push("编辑时间偏移");
+            }
+            editOptions.push("编辑点击坐标");
+            editOptions.push("编辑点击参数");
+            if (taskIndex > 0 && settings.tasks.length > 1) {
+                editOptions.push("删除此任务");
+            }
+            editOptions.push("返回任务列表");
+            
+            var choice = dialogs.select(taskInfo, editOptions);
+            
+            if (choice === -1 || choice === editOptions.length - 1) {
+                // 返回任务列表
+                break;
+            }
+            
+            if (taskIndex === 0) {
+                // 主任务
+                if (choice === 0) {
+                    // 编辑触发时间
+                    var timeResult = showAlarmClockPickerFloaty(
+                        parseInt(task.targetTime.substring(0, 2)),
+                        parseInt(task.targetTime.substring(3, 5)),
+                        parseInt(task.targetTime.substring(6, 8)),
+                        parseInt(task.targetTime.substring(9, 10))
+                    );
+                    if (timeResult) {
+                        task.targetTime = pad2(timeResult.h) + ":" + pad2(timeResult.m) + ":" + pad2(timeResult.s) + ":" + pad1(timeResult.d);
+                        // 直接保存修改后的 settings 到文件
+                        settings.lastModified = new Date().toISOString();
+                        files.write(CONFIG_FILE_PATH, JSON.stringify(settings, null, 2));
+                        log("任务配置已保存到文件: " + CONFIG_FILE_PATH);
+                        dialogs.alert("成功", "触发时间已更新为: " + task.targetTime);
+                    }
+                } else if (choice === 1) {
+                    // 编辑点击坐标
+                    var coordResult = getTouchCoordinates(-1, true);
+                    if (coordResult && coordResult.length > 0) {
+                        task.clickX = coordResult[coordResult.length - 1].x;
+                        task.clickY = coordResult[coordResult.length - 1].y;
+                        // 直接保存修改后的 settings 到文件
+                        settings.lastModified = new Date().toISOString();
+                        files.write(CONFIG_FILE_PATH, JSON.stringify(settings, null, 2));
+                        log("任务配置已保存到文件: " + CONFIG_FILE_PATH);
+                        dialogs.alert("成功", "点击坐标已更新为: (" + task.clickX + ", " + task.clickY + ")");
+                    }
+                } else if (choice === 2) {
+                    // 编辑点击参数
+                    var paramResult = showClickFrequencyPickerFloaty(
+                        task.interval,
+                        task.pressDuration,
+                        task.totalDuration
+                    );
+                    if (paramResult) {
+                        task.interval = paramResult.interval;
+                        task.pressDuration = paramResult.pressDuration;
+                        task.totalDuration = paramResult.totalDuration;
+                        // 直接保存修改后的 settings 到文件
+                        settings.lastModified = new Date().toISOString();
+                        files.write(CONFIG_FILE_PATH, JSON.stringify(settings, null, 2));
+                        log("任务配置已保存到文件: " + CONFIG_FILE_PATH);
+                        dialogs.alert("成功", "点击参数已更新");
                     }
                 }
-            } else if (choice === 1) {
-                // 编辑点击坐标
-                var coordResult = getTouchCoordinates(-1, true);
-                if (coordResult && coordResult.length > 0) {
-                    task.clickX = coordResult[coordResult.length - 1].x;
-                    task.clickY = coordResult[coordResult.length - 1].y;
-                    saveSettings();
-                    dialogs.alert("成功", "点击坐标已更新为: (" + task.clickX + ", " + task.clickY + ")");
-                }
-            } else if (choice === 2) {
-                // 编辑点击参数
-                var paramResult = showClickFrequencyPickerFloaty(
-                    task.interval,
-                    task.pressDuration,
-                    task.totalDuration
-                );
-                if (paramResult) {
-                    task.interval = paramResult.interval;
-                    task.pressDuration = paramResult.pressDuration;
-                    task.totalDuration = paramResult.totalDuration;
-                    saveSettings();
-                    dialogs.alert("成功", "点击参数已更新");
-                }
-            } else if (choice === 3) {
-                // 删除此任务
-                var confirmDelete = dialogs.confirm("确认删除?", "是否删除任务 " + (taskIndex + 1) + "?");
-                if (confirmDelete) {
-                    settings.tasks.splice(taskIndex, 1);
-                    storage.put("settings", JSON.stringify(settings));
-                    dialogs.alert("成功", "任务已删除");
-                    break;
+            } else {
+                // 从属任务
+                if (choice === 0) {
+                    // 编辑时间偏移
+                    var offsetStr = dialogs.rawInput("输入时间偏移(单位:秒)\n\n当前值: " + task.offsetSec.toFixed(1), "0.0");
+                    if (offsetStr !== null) {
+                        var offset = parseFloat(offsetStr);
+                        if (!isNaN(offset)) {
+                            task.offsetSec = offset;
+                            // 直接保存修改后的 settings 到文件
+                            settings.lastModified = new Date().toISOString();
+                            files.write(CONFIG_FILE_PATH, JSON.stringify(settings, null, 2));
+                            log("任务配置已保存到文件: " + CONFIG_FILE_PATH);
+                            dialogs.alert("成功", "时间偏移已更新为: " + offset.toFixed(1) + "s");
+                        } else {
+                            dialogs.alert("错误", "请输入有效的数字");
+                        }
+                    }
+                } else if (choice === 1) {
+                    // 编辑点击坐标
+                    var coordResult = getTouchCoordinates(-1, true);
+                    if (coordResult && coordResult.length > 0) {
+                        task.clickX = coordResult[coordResult.length - 1].x;
+                        task.clickY = coordResult[coordResult.length - 1].y;
+                        // 直接保存修改后的 settings 到文件
+                        settings.lastModified = new Date().toISOString();
+                        files.write(CONFIG_FILE_PATH, JSON.stringify(settings, null, 2));
+                        log("任务配置已保存到文件: " + CONFIG_FILE_PATH);
+                        dialogs.alert("成功", "点击坐标已更新为: (" + task.clickX + ", " + task.clickY + ")");
+                    }
+                } else if (choice === 2) {
+                    // 编辑点击参数
+                    var paramResult = showClickFrequencyPickerFloaty(
+                        task.interval,
+                        task.pressDuration,
+                        task.totalDuration
+                    );
+                    if (paramResult) {
+                        task.interval = paramResult.interval;
+                        task.pressDuration = paramResult.pressDuration;
+                        task.totalDuration = paramResult.totalDuration;
+                        // 直接保存修改后的 settings 到文件
+                        settings.lastModified = new Date().toISOString();
+                        files.write(CONFIG_FILE_PATH, JSON.stringify(settings, null, 2));
+                        log("任务配置已保存到文件: " + CONFIG_FILE_PATH);
+                        dialogs.alert("成功", "点击参数已更新");
+                    }
+                } else if (choice === 3) {
+                    // 删除此任务
+                    var confirmDelete = dialogs.confirm("确认删除?", "是否删除任务 " + (taskIndex + 1) + "?");
+                    if (confirmDelete) {
+                        settings.tasks.splice(taskIndex, 1);
+                        settings.lastModified = new Date().toISOString();
+                        files.write(CONFIG_FILE_PATH, JSON.stringify(settings, null, 2));
+                        log("任务已删除并保存到文件: " + CONFIG_FILE_PATH);
+                        dialogs.alert("成功", "任务已删除");
+                        toast("任务已删除并保存");
+                        break;
+                    }
                 }
             }
         }
+    } catch (e) {
+        dialogs.alert("错误", "编辑任务失败: " + e);
+        log("编辑任务失败: " + e);
     }
 }
 
@@ -1292,11 +1406,19 @@ function main() {
     // 检查无障碍服务
     auto.waitFor();
     
-    // 加载保存的时间源
-    var storage = storages.create("autoshop_settings");
-    var savedTimeSource = storage.get("timeSource");
-    if (savedTimeSource) {
-        currentTimeSource = savedTimeSource;
+    // 从json文件加载保存的时间源
+    ensureTimeSourceFileExists();
+    if (files.exists(TIME_SOURCE_FILE_PATH)) {
+        try {
+            var timeSourceStr = files.read(TIME_SOURCE_FILE_PATH);
+            var timeSourceConfig = JSON.parse(timeSourceStr);
+            if (timeSourceConfig.timeSource) {
+                currentTimeSource = timeSourceConfig.timeSource;
+                log("已加载时间源配置: " + currentTimeSource);
+            }
+        } catch (e) {
+            log("加载时间源配置失败: " + e);
+        }
     }
     
     while(1){
@@ -1347,11 +1469,24 @@ function selectTimeSource() {
     
     if (choice >= 0) {
         currentTimeSource = sources[choice].value;
-        var storage = storages.create("autoshop_settings");
-        storage.put("timeSource", currentTimeSource);
-        dialogs.alert("成功", "已设置为: " + sourceNames[choice]);
-        log("时间源已切换为: " + sourceNames[choice]);
-        return true;
+        
+        // 保存到JSON文件
+        try {
+            ensureTimeSourceFileExists();
+            var timeSourceConfig = {
+                timeSource: currentTimeSource,
+                lastModified: new Date().toISOString()
+            };
+            files.write(TIME_SOURCE_FILE_PATH, JSON.stringify(timeSourceConfig, null, 2));
+            dialogs.alert("成功", "已设置为: " + sourceNames[choice]);
+            log("时间源已切换为: " + sourceNames[choice] + "，已保存到: " + TIME_SOURCE_FILE_PATH);
+            toast("时间源已保存: " + sourceNames[choice]);
+            return true;
+        } catch (e) {
+            dialogs.alert("错误", "保存时间源失败: " + e);
+            log("保存时间源失败: " + e);
+            return false;
+        }
     }
     return false;
 }
